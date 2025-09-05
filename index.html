@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Momentum AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+      
+      :root {
+        /* Default Theme: Creative */
+        --color-bg-h: 30; --color-bg-s: 25%; --color-bg-l: 95.7%;
+        --color-surface-h: 0; --color-surface-s: 0%; --color-surface-l: 100%;
+        --color-surface-sunken-h: 30; --color-surface-sunken-s: 18.2%; --color-surface-sunken-l: 94.1%;
+        --color-text-primary-h: 21; --color-text-primary-s: 28.9%; --color-text-primary-l: 18.6%;
+        --color-text-secondary-h: 21; --color-text-secondary-s: 15.4%; --color-text-secondary-l: 29.2%;
+        --color-text-subtle-h: 21; --color-text-subtle-s: 12.3%; --color-text-subtle-l: 36%;
+        --color-border-h: 30; --color-border-s: 16.7%; --color-border-l: 85%;
+        --color-border-hover-h: 30; --color-border-hover-s: 12.5%; --color-border-hover-l: 78%;
+        --color-primary-accent-h: 11; --color-primary-accent-s: 55.4%; --color-primary-accent-l: 54.3%;
+        --color-primary-accent-text-h: 0; --color-primary-accent-text-s: 0%; --color-primary-accent-text-l: 100%;
+        --color-secondary-accent-h: 147; --color-secondary-accent-s: 27.6%; --color-secondary-accent-l: 42%;
+        --color-secondary-accent-text-h: 0; --color-secondary-accent-text-s: 0%; --color-secondary-accent-text-l: 100%;
+        --color-success-h: 147; --color-success-s: 27.6%; --color-success-l: 42%;
+        --color-warning-h: 40; --color-warning-s: 94.4%; --color-warning-l: 57.1%;
+        --color-danger-h: 352; --color-danger-s: 98.4%; --color-danger-l: 41%;
+        --color-danger-text-h: 0; --color-danger-text-s: 0%; --color-danger-text-l: 100%;
+        
+        /* Customization Variables */
+        --animation-speed-modifier: 1; /* 0 to 2 */
+        --color-intensity-modifier: 1; /* 0 to 1.5 */
+        --ui-contrast-modifier: 1; /* 0.8 to 1.2 */
+        --text-contrast-modifier: 1; /* 0.8 to 1.5 */
+
+        /* Base Dynamic Properties */
+        --color-bg: hsl(var(--color-bg-h), calc(var(--color-bg-s) * var(--color-intensity-modifier)), calc(var(--color-bg-l) * var(--ui-contrast-modifier)));
+        --color-surface: hsl(var(--color-surface-h), calc(var(--color-surface-s) * var(--color-intensity-modifier)), calc(var(--color-surface-l) * var(--ui-contrast-modifier)));
+        --color-surface-sunken: hsl(var(--color-surface-sunken-h), calc(var(--color-surface-sunken-s) * var(--color-intensity-modifier)), calc(var(--color-surface-sunken-l) * var(--ui-contrast-modifier)));
+        --color-text-primary: hsl(var(--color-text-primary-h), calc(var(--color-text-primary-s) * var(--color-intensity-modifier)), calc(var(--color-text-primary-l) / var(--text-contrast-modifier)));
+        --color-text-secondary: hsl(var(--color-text-secondary-h), calc(var(--color-text-secondary-s) * var(--color-intensity-modifier)), calc(var(--color-text-secondary-l) / var(--text-contrast-modifier)));
+        --color-text-subtle: hsl(var(--color-text-subtle-h), calc(var(--color-text-subtle-s) * var(--color-intensity-modifier)), calc(var(--color-text-subtle-l) / var(--text-contrast-modifier)));
+        --color-border: hsl(var(--color-border-h), calc(var(--color-border-s) * var(--color-intensity-modifier)), calc(var(--color-border-l) * var(--ui-contrast-modifier)));
+        --color-border-hover: hsl(var(--color-border-hover-h), calc(var(--color-border-hover-s) * var(--color-intensity-modifier)), calc(var(--color-border-hover-l) * var(--ui-contrast-modifier)));
+        
+        --color-primary-accent: hsl(var(--color-primary-accent-h), calc(var(--color-primary-accent-s) * var(--color-intensity-modifier)), var(--color-primary-accent-l));
+        --color-primary-accent-hover: hsl(var(--color-primary-accent-h), calc(var(--color-primary-accent-s) * var(--color-intensity-modifier)), calc(var(--color-primary-accent-l) * 0.9));
+        --color-primary-accent-text: hsl(var(--color-primary-accent-text-h), var(--color-primary-accent-text-s), var(--color-primary-accent-text-l));
+        
+        --color-secondary-accent: hsl(var(--color-secondary-accent-h), calc(var(--color-secondary-accent-s) * var(--color-intensity-modifier)), var(--color-secondary-accent-l));
+        --color-secondary-accent-hover: hsl(var(--color-secondary-accent-h), calc(var(--color-secondary-accent-s) * var(--color-intensity-modifier)), calc(var(--color-secondary-accent-l) * 0.9));
+        --color-secondary-accent-text: hsl(var(--color-secondary-accent-text-h), var(--color-secondary-accent-text-s), var(--color-secondary-accent-text-l));
+
+        --color-success: hsl(var(--color-success-h), var(--color-success-s), var(--color-success-l));
+        --color-warning: hsl(var(--color-warning-h), var(--color-warning-s), var(--color-warning-l));
+        --color-danger: hsl(var(--color-danger-h), var(--color-danger-s), var(--color-danger-l));
+        --color-danger-hover: hsl(var(--color-danger-h), var(--color-danger-s), calc(var(--color-danger-l) * 0.9));
+        --color-danger-text: hsl(var(--color-danger-text-h), var(--color-danger-text-s), var(--color-danger-text-l));
+
+        --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+        --border-radius-sm: 0.375rem;
+        --border-radius-md: 0.5rem;
+        --border-radius-lg: 0.75rem;
+        --border-radius-xl: 1rem;
+        --border-radius-2xl: 1.5rem;
+        --base-animation-speed: 0.3s;
+        --animation-speed: calc(var(--base-animation-speed) * var(--animation-speed-modifier));
+        --font-family: 'Inter', sans-serif;
+      }
+
+      body {
+        font-family: var(--font-family);
+        background-color: var(--color-bg);
+        color: var(--color-text-primary);
+        transition: background-color var(--animation-speed) ease-in-out, color var(--animation-speed) ease-in-out;
+      }
+
+      * {
+        transition: background-color var(--animation-speed) ease-in-out, color var(--animation-speed) ease-in-out, border-color var(--animation-speed) ease-in-out, transform var(--animation-speed) ease-in-out;
+      }
+
+      ::placeholder {
+        color: var(--color-text-subtle);
+        opacity: 1; /* Firefox */
+      }
+
+      /* Accessibility & Interaction Enhancements */
+      :focus-visible {
+        outline: 3px solid hsla(var(--color-primary-accent-h), calc(var(--color-primary-accent-s) * var(--color-intensity-modifier)), var(--color-primary-accent-l), 0.6);
+        outline-offset: 2px;
+        border-radius: var(--border-radius-md);
+      }
+      
+      /* Subtle lift effect for interactive elements */
+      button:not(:disabled):hover,
+      a:hover {
+        transform: translateY(-1px);
+      }
+      button:not(:disabled):active,
+      a:active {
+        transform: translateY(0px);
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      
+      .animate-fade-in {
+        animation: fadeIn var(--animation-speed) ease-out;
+      }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.1.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "react/": "https://aistudiocdn.com/react@^19.1.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.16.0",
+    "firebase/app": "https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js",
+    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js",
+    "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js",
+    "firebase/": "https://aistudiocdn.com/firebase@^12.2.1/"
+  }
+}
+</script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+</body>
+</html>
