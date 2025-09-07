@@ -1,42 +1,35 @@
 import { ContextTag, ThemeName, ThemeProperties, CustomThemeProperties, PresetName } from '../types';
 
-export const tagColors: Record<ContextTag, string> = {
-    [ContextTag.Rushed]: 'bg-red-100 text-red-800',
-    [ContextTag.Relaxed]: 'bg-green-100 text-green-800',
-    [ContextTag.HighEnergy]: 'bg-yellow-100 text-yellow-800',
-    [ContextTag.LowEnergy]: 'bg-blue-100 text-blue-800',
-    [ContextTag.Work]: 'bg-indigo-100 text-indigo-800',
-    [ContextTag.School]: 'bg-purple-100 text-purple-800',
-    [ContextTag.Personal]: 'bg-pink-100 text-pink-800',
-    [ContextTag.Prep]: 'bg-stone-100 text-stone-800',
-    [ContextTag.Travel]: 'bg-cyan-100 text-cyan-800',
-    [ContextTag.Recovery]: 'bg-lime-100 text-lime-800',
+export const tagThemeTokens: Record<string, { bg: string; text: string }> = {
+    'work': { bg: 'var(--tag-work-bg)', text: 'var(--tag-work-text)' },
+    'personal': { bg: 'var(--tag-personal-bg)', text: 'var(--tag-personal-text)' },
+    'ideas': { bg: 'var(--tag-ideas-bg)', text: 'var(--tag-ideas-text)' },
+    'tasks': { bg: 'var(--tag-tasks-bg)', text: 'var(--tag-tasks-text)' },
+    'urgent': { bg: 'var(--tag-urgent-bg)', text: 'var(--tag-urgent-text)' },
+    'default': { bg: 'var(--tag-default-bg)', text: 'var(--tag-default-text)' },
 };
 
 export const getAnchorColor = (title: string): string => {
     const lowerTitle = title.toLowerCase();
     
-    // These now return Tailwind classes that use CSS variables for colors,
-    // allowing them to be themed.
     if (lowerTitle.includes('work') || lowerTitle.includes('school') || lowerTitle.includes('meeting')) {
-        return 'bg-[var(--color-secondary-accent)] text-[var(--color-secondary-accent-text)] border-[var(--color-secondary-accent-hover)]';
+        return 'bg-[var(--context-work)] text-white';
     }
-    if (lowerTitle.includes('gym') || lowerTitle.includes('workout') || lowerTitle.includes('health') || lowerTitle.includes('fitness') || lowerTitle.includes('doctor')) {
-        return 'bg-[var(--color-success)] text-white border-[var(--color-success)]';
+    if (lowerTitle.includes('gym') || lowerTitle.includes('workout') || lowerTitle.includes('health') || lowerTitle.includes('fitness') || lowerTitle.includes('doctor') || lowerTitle.includes('focus') || lowerTitle.includes('deep work')) {
+        return 'bg-[var(--context-focus)] text-white';
     }
     if (lowerTitle.includes('family') || lowerTitle.includes('kids') || lowerTitle.includes('social') || lowerTitle.includes('date')) {
-        return 'bg-blue-500 text-white border-blue-600'; // Note: This blue is not from theme, could be themed later.
+        return 'bg-[var(--context-social)] text-white';
     }
-    if (lowerTitle.includes('study') || lowerTitle.includes('focus') || lowerTitle.includes('deep work')) {
-        return 'bg-purple-500 text-white border-purple-600'; // Note: This purple is not from theme, could be themed later.
+    if (lowerTitle.includes('relax') || lowerTitle.includes('recovery') || lowerTitle.includes('chill')) {
+        return 'bg-[var(--context-recovery)] text-white';
     }
     
-    // Default color for other categories
-    return 'bg-stone-500 text-white border-stone-600';
+    return 'bg-[var(--context-default)] text-white';
 };
 
 const creativeTheme: ThemeProperties = {
-  '--color-bg-h': 30, '--color-bg-s': '25%', '--color-bg-l': '95.7%',
+  '--color-bg-h': 30, '--color-bg-s': '25%', '--color-bg-l': '97.1%', // Updated for #FAF9F7
   '--color-surface-h': 0, '--color-surface-s': '0%', '--color-surface-l': '100%',
   '--color-surface-sunken-h': 30, '--color-surface-sunken-s': '18.2%', '--color-surface-sunken-l': '94.1%',
   '--color-text-primary-h': 21, '--color-text-primary-s': '28.9%', '--color-text-primary-l': '18.6%',
@@ -54,7 +47,7 @@ const creativeTheme: ThemeProperties = {
 };
 
 const focusTheme: ThemeProperties = {
-  '--color-bg-h': 0, '--color-bg-s': '0%', '--color-bg-l': '100%',
+  '--color-bg-h': 30, '--color-bg-s': '25%', '--color-bg-l': '97.1%', // Updated for #FAF9F7
   '--color-surface-h': 210, '--color-surface-s': '40%', '--color-surface-l': '98%',
   '--color-surface-sunken-h': 210, '--color-surface-sunken-s': '40%', '--color-surface-sunken-l': '96.1%',
   '--color-text-primary-h': 222, '--color-text-primary-s': '39.4%', '--color-text-primary-l': '11.2%',
@@ -72,7 +65,7 @@ const focusTheme: ThemeProperties = {
 };
 
 const recoveryTheme: ThemeProperties = {
-  '--color-bg-h': 165, '--color-bg-s': '15.8%', '--color-bg-l': '94.7%',
+  '--color-bg-h': 30, '--color-bg-s': '25%', '--color-bg-l': '97.1%', // Updated for #FAF9F7
   '--color-surface-h': 0, '--color-surface-s': '0%', '--color-surface-l': '100%',
   '--color-surface-sunken-h': 160, '--color-surface-sunken-s': '18.5%', '--color-surface-sunken-l': '93.5%',
   '--color-text-primary-h': 162, '--color-text-primary-s': '10.5%', '--color-text-primary-l': '28.6%',
@@ -90,15 +83,15 @@ const recoveryTheme: ThemeProperties = {
 };
 
 const eveningTheme: ThemeProperties = {
-  '--color-bg-h': 222, '--color-bg-s': '39.4%', '--color-bg-l': '11.2%',
-  '--color-surface-h': 221, '--color-surface-s': '27.9%', '--color-surface-l': '17.1%',
-  '--color-surface-sunken-h': 222, '--color-surface-sunken-s': '33.3%', '--color-surface-sunken-l': '9.6%',
+  '--color-bg-h': 0, '--color-bg-s': '0%', '--color-bg-l': '11%', // Updated for #1C1C1C
+  '--color-surface-h': 0, '--color-surface-s': '0%', '--color-surface-l': '15%',
+  '--color-surface-sunken-h': 0, '--color-surface-sunken-s': '0%', '--color-surface-sunken-l': '8%',
   '--color-text-primary-h': 210, '--color-text-primary-s': '40%', '--color-text-primary-l': '96.1%',
   '--color-text-secondary-h': 216, '--color-text-secondary-s': '12.1%', '--color-text-secondary-l': '83.9%',
   '--color-text-subtle-h': 215, '--color-text-subtle-s': '9.1%', '--color-text-subtle-l': '70%',
-  '--color-border-h': 221, '--color-border-s': '21.6%', '--color-border-l': '32%',
-  '--color-border-hover-h': 220, '--color-border-hover-s': '14.9%', '--color-border-hover-l': '40%',
-  '--color-primary-accent-h': 11, '--color-primary-accent-s': '60.6%', '--color-primary-accent-l': '63.9%',
+  '--color-border-h': 0, '--color-border-s': '0%', '--color-border-l': '20%',
+  '--color-border-hover-h': 0, '--color-border-hover-s': '0%', '--color-border-hover-l': '25%',
+  '--color-primary-accent-h': 11, '--color-primary-accent-s': '66.7%', '--color-primary-accent-l': '63.9%',
   '--color-primary-accent-text-h': 0, '--color-primary-accent-text-s': '0%', '--color-primary-accent-text-l': '100%',
   '--color-secondary-accent-h': 158, '--color-secondary-accent-s': '64.1%', '--color-secondary-accent-l': '67.3%',
   '--color-secondary-accent-text-h': 159, '--color-secondary-accent-text-s': '84.8%', '--color-secondary-accent-text-l': '17.3%',

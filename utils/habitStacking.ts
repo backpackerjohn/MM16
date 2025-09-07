@@ -1,4 +1,5 @@
-import { MicroHabit, HabitCategory, HabitEnergyRequirement, EnergyTag } from '../types';
+import { MicroHabit, HabitCategory, HabitEnergyRequirement } from '../types';
+import { EnergyTag } from '../contracts';
 
 export const habitDatabase: MicroHabit[] = [
     // Physical Habits

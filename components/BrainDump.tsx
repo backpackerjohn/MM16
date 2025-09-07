@@ -1,161 +1,26 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
-import { BrainDumpItem, Cluster, Note, ClusterPlan, RefinementSuggestion, ClusterMove, Confirmation } from '../types';
+import React, { useState, useMemo } from 'react';
+import { BrainDumpItem, Note } from '../contracts';
+import { Cluster, ClusterPlan, RefinementSuggestion, ClusterMove, Confirmation, Result } from '../types';
 import TrashIcon from './icons/TrashIcon';
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-const refineItemsWithNotes = async (items: BrainDumpItem[], notes: Record<string, Note>): Promise<RefinementSuggestion[]> => {
-    const schema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                itemId: { type: Type.STRING },
-                proposedTags: { type: Type.ARRAY, items: { type: Type.STRING } },
-                proposedUrgency: { type: Type.STRING, enum: ['low', 'normal', 'high'] },
-                blockers: { type: Type.ARRAY, items: { type: Type.STRING } },
-                timeEstimateMinutesP50: { type: Type.NUMBER },
-                timeEstimateMinutesP90: { type: Type.NUMBER },
-                confidence: { type: Type.NUMBER },
-                rationale: { type: Type.STRING },
-                 createdAt: { type: Type.STRING }
-            },
-            required: ['itemId', 'proposedTags', 'proposedUrgency', 'blockers', 'timeEstimateMinutesP50', 'timeEstimateMinutesP90', 'confidence', 'rationale', 'createdAt']
-        }
-    };
-
-    const itemsForPrompt = items.map(item => ({
-        id: item.id,
-        item: item.item,
-        tags: item.tags,
-        note: (notes[item.id] && notes[item.id].shareWithAI) ? notes[item.id].text : null
-    }));
-
-    const prompt = `
-      You are an expert project manager. Analyze this list of tasks. For each task, provide refined metadata based on its description and any provided notes.
-      - **Task Archetypes**: Identify the type of task (e.g., errand with travel, deep work, meeting, admin). This informs the time estimate.
-      - **P50/P90 Time Estimates**: Provide a 50th percentile (P50, median) and 90th percentile (P90, pessimistic) time estimate in WHOLE MINUTES. P90 must be >= P50. A large gap between P50 and P90 indicates uncertainty or dependencies.
-      - **Blockers**: Identify any dependencies or obstacles (e.g., "awaiting feedback", "requires travel").
-      - **Confidence**: Rate your confidence in the analysis from 0.0 to 1.0.
-      - **Rationale**: Provide a one-sentence justification for your suggestions.
-      - **Urgency**: Classify as 'low', 'normal', or 'high'.
-      - **CreatedAt**: Use the current ISO 8601 timestamp.
-      - **Privacy**: A null note means the user did not consent to sharing it. Analyze based on the item text alone.
-
-      Return a JSON array of suggestion objects, strictly following the schema.
-
-      **Input Items:**
-      ${JSON.stringify(itemsForPrompt)}
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: schema,
-            },
-        });
-        const jsonStr = response.text.trim();
-        return JSON.parse(jsonStr);
-    } catch (error) {
-        console.error("Error refining items:", error);
-        throw new Error("The AI failed to refine the items.");
-    }
-};
-
-const planCluster = async (items: BrainDumpItem[], refinements: RefinementSuggestion[]): Promise<{ moves: ClusterMove[]; summary: string; clusters: Cluster[] }> => {
-    const itemMap = new Map(items.map(i => [i.id, i]));
-    const itemsForClustering = refinements.map(ref => ({
-        id: ref.itemId,
-        item: itemMap.get(ref.itemId)?.item || '',
-        refinedTags: ref.proposedTags,
-        p90: ref.timeEstimateMinutesP90,
-        blockers: ref.blockers,
-    }));
-    
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            summary: { type: Type.STRING },
-            clusters: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        clusterName: { type: Type.STRING },
-                        itemIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        estimatedTime: { type: Type.STRING }
-                    },
-                    required: ['clusterName', 'itemIds', 'estimatedTime']
-                }
-            }
-        },
-        required: ['summary', 'clusters']
-    };
-
-    const prompt = `
-      Given this list of tasks and their refined metadata (tags, time estimates), your job is to organize them into logical clusters.
-      1.  **Create Clusters**: Group items into clusters with descriptive names (e.g., "Q3 Marketing Plan", "Household Errands"). Every item must belong to one cluster.
-      2.  **Estimate Cluster Time**: Sum the P90 estimates for all items in a cluster and provide a human-readable total time (e.g., "3 hours 30 minutes", "5 days").
-      3.  **Write Summary**: Provide a brief, 1-2 sentence summary of the organizational changes.
-      
-      Return a single JSON object with "summary" and "clusters".
-
-      **Input Data:**
-      ${JSON.stringify(itemsForClustering)}
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema }
-        });
-        const jsonStr = response.text.trim();
-        const result = JSON.parse(jsonStr);
-
-        // For this version, we will create placeholder moves. A more advanced version would have the AI generate these directly.
-        const moves: ClusterMove[] = []; 
-        
-        return { ...result, moves };
-    } catch (error) {
-        console.error("Error planning cluster:", error);
-        throw new Error("The AI failed to plan the clusters.");
-    }
-};
-
-const categoryColors: { [key: string]: string } = {
-    'work': 'bg-blue-100 text-blue-800', 'personal': 'bg-green-100 text-green-800', 'ideas': 'bg-yellow-100 text-yellow-800', 'tasks': 'bg-purple-100 text-purple-800', 'urgent': 'bg-red-100 text-red-800', 'default': 'bg-stone-100 text-stone-800'
-};
+import { tagThemeTokens } from '../utils/styles';
+import { refineBrainDumpItems, planBrainDumpClusters } from '../services/geminiService';
+import { useData } from '../src/context/DataContext';
 
 interface BrainDumpProps {
-    processedItems: BrainDumpItem[];
-    setProcessedItems: React.Dispatch<React.SetStateAction<BrainDumpItem[]>>;
-    notes: Record<string, Note>;
-    setNotes: React.Dispatch<React.SetStateAction<Record<string, Note>>>;
-    clusters: Cluster[];
-    setClusters: React.Dispatch<React.SetStateAction<Cluster[]>>;
-    handleProcess: (text: string) => Promise<void>;
+    handleProcess: (text: string) => Promise<Result<BrainDumpItem[]>>;
     error: string | null;
     setError: React.Dispatch<React.SetStateAction<string | null>>;
     onConfirm: (props: Omit<Confirmation, 'isOpen'>) => void;
 }
 
 const BrainDump: React.FC<BrainDumpProps> = ({
-    processedItems,
-    setProcessedItems,
-    notes,
-    setNotes,
-    clusters,
-    setClusters,
     handleProcess: handleProcessProp,
     error,
     setError,
     onConfirm,
 }) => {
+    const { processedItems, setProcessedItems, notes, setNotes, clusters, setClusters } = useData();
+
     const [inputText, setInputText] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isClustering, setIsClustering] = useState(false);
@@ -173,29 +38,47 @@ const BrainDump: React.FC<BrainDumpProps> = ({
     const handleProcess = async () => {
         if (!inputText.trim()) return;
         setIsLoading(true);
-        try {
-            await handleProcessProp(inputText);
+        const result = await handleProcessProp(inputText);
+        if (result.ok) {
+            setProcessedItems(prev => [...prev, ...result.data]);
             setInputText('');
             setClusters([]);
             setSelectedCluster(null);
-        } catch (e: any) {
-            // Error is already set in the prop handler
-        } finally {
-            setIsLoading(false);
         }
+        // Error is set in the parent component via the Result type
+        setIsLoading(false);
     };
 
     const handleCluster = async () => {
         if (processedItems.length === 0) return;
         setIsClustering(true);
         setError(null);
+
         try {
-            const refinements = await refineItemsWithNotes(processedItems, notes);
-            const plan = await planCluster(processedItems, refinements);
-            setSuggestions({ ...plan, refinements });
-            setClusters(plan.clusters); // Update clusters for card view
+            const refinementsResult = await refineBrainDumpItems(processedItems, notes);
+            
+            // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+            if (refinementsResult.ok === false) {
+                setError(refinementsResult.error);
+                setIsClustering(false);
+                return;
+            }
+            
+            const planResult = await planBrainDumpClusters(processedItems, refinementsResult.data);
+            
+            // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+            if (planResult.ok === false) {
+                setError(planResult.error);
+                setIsClustering(false);
+                return;
+            }
+
+            setSuggestions({ ...planResult.data, refinements: refinementsResult.data });
+            setClusters(planResult.data.clusters);
             setIsSuggestionTrayOpen(true);
-        } catch (e: any) { setError(e.message); } finally { setIsClustering(false); }
+        } finally {
+            setIsClustering(false);
+        }
     };
 
     const handleDeleteSelected = () => {
@@ -247,7 +130,15 @@ const BrainDump: React.FC<BrainDumpProps> = ({
         const fTag = newTag.charAt(0).toUpperCase() + newTag.slice(1);
         setProcessedItems(p => p.map(i => i.id === itemId && !i.tags.find(t => t.toLowerCase() === fTag.toLowerCase()) ? { ...i, tags: [...i.tags, fTag] } : i));
     };
-    const getTagColor = (tag: string) => categoryColors[Object.keys(categoryColors).find(k => tag.toLowerCase().includes(k))] || categoryColors['default'];
+    
+    const getTagStyle = (tag: string): React.CSSProperties => {
+        const key = Object.keys(tagThemeTokens).find(k => tag.toLowerCase().includes(k)) || 'default';
+        return {
+            backgroundColor: tagThemeTokens[key].bg,
+            color: tagThemeTokens[key].text,
+        };
+    };
+
 
     const selectedClusterItems = useMemo(() => {
         if (!selectedCluster) return [];
@@ -261,8 +152,8 @@ const BrainDump: React.FC<BrainDumpProps> = ({
         const note = notes[item.id];
 
         return (
-            <div key={item.id} className={`group relative bg-[var(--color-surface)] p-4 rounded-[var(--border-radius-lg)] shadow-sm border transition-all duration-200 flex items-start space-x-4 ${isSelected ? 'shadow-md border-[var(--color-primary-accent)]' : 'border-[var(--color-border)] hover:shadow-md'}`}>
-                <input type="checkbox" checked={isSelected} onChange={() => handleToggleSelect(item.id)} className="mt-1 h-4 w-4 rounded border-gray-300 text-[var(--color-primary-accent)] focus:ring-[var(--color-primary-accent)]" aria-label={`Select item: ${item.item}`}/>
+            <div key={item.id} className={`content-card group relative bg-[var(--color-surface)] p-4 rounded-[var(--border-radius-lg)] transition-all duration-200 flex items-start space-x-4 ${isSelected ? 'shadow-md border-[var(--color-primary-accent)] ring-1 ring-[var(--color-primary-accent)]' : 'hover:shadow-md'}`}>
+                <input type="checkbox" checked={isSelected} onChange={() => handleToggleSelect(item.id)} className="animated-checkbox mt-1" aria-label={`Select item: ${item.item}`}/>
                 <div className="flex-1">
                     <p className="text-[var(--color-text-primary)]">{item.item}</p>
                     {note && !isEditingNote && <p className="mt-2 text-sm text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] p-2 rounded-[var(--border-radius-md)] whitespace-pre-wrap">{note.text}</p>}
@@ -283,7 +174,7 @@ const BrainDump: React.FC<BrainDumpProps> = ({
                     )}
                     <div className="flex items-center gap-2 mt-3 flex-wrap">
                         {item.tags.map(tag => (
-                           <span key={tag} className={`group/tag relative px-2.5 py-0.5 text-xs font-semibold rounded-full flex items-center gap-1.5 ${getTagColor(tag)}`}>
+                           <span key={tag} style={getTagStyle(tag)} className="group/tag relative px-2.5 py-0.5 text-xs font-semibold rounded-full flex items-center gap-1.5">
                                {tag} <button onClick={() => handleRemoveTag(item.id, tag)} className="opacity-0 group-hover/tag:opacity-100 text-stone-500 hover:text-stone-900 transition-opacity" title={`Remove tag: ${tag}`}>&times;</button>
                            </span>
                         ))}
@@ -296,7 +187,7 @@ const BrainDump: React.FC<BrainDumpProps> = ({
                          )}
                          {item.blockers && item.blockers.length > 0 && (
                             <div className="flex items-center space-x-1 text-xs text-red-600 font-medium ml-2" title={`Blockers: ${item.blockers.join(', ')}`}>
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002 2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clipRule="evenodd" /></svg>
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clipRule="evenodd" /></svg>
                                 <span>{item.blockers.length}</span>
                             </div>
                          )}
@@ -343,10 +234,10 @@ const BrainDump: React.FC<BrainDumpProps> = ({
     return (
         <main className="container mx-auto p-8">
             <div className={`transition-all duration-300 ${isSuggestionTrayOpen ? 'max-w-4xl' : 'max-w-4xl mx-auto'}`}>
-                <h1 className="text-4xl font-bold text-[var(--color-text-primary)] mb-2">Brain Dump</h1>
-                <p className="text-[var(--color-text-secondary)] mb-6">Capture your thoughts, ideas, and tasks. The AI will intelligently split, categorize, and organize everything for you.</p>
+                <h1 className="text-4xl font-bold text-[var(--color-text-primary)] mb-6">Brain Dump</h1>
+                <p className="text-[var(--color-text-secondary)] -mt-4 mb-6">Capture your thoughts, ideas, and tasks. The AI will intelligently split, categorize, and organize everything for you.</p>
 
-                <div className="bg-[var(--color-surface)] p-6 rounded-[var(--border-radius-xl)] shadow-lg border border-[var(--color-border)]">
+                <div className="content-card bg-[var(--color-surface)] p-6 rounded-[var(--border-radius-xl)]">
                     <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Follow up with John about Q2 budget..." className="w-full h-48 p-4 bg-transparent border border-[var(--color-border-hover)] rounded-[var(--border-radius-md)] focus:ring-2 focus:ring-[var(--color-primary-accent)] transition-shadow resize-none" />
                     <div className="mt-4 flex justify-end">
                         <button onClick={handleProcess} disabled={isLoading} className="px-6 py-3 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-[var(--border-radius-md)] hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md disabled:bg-stone-400 flex items-center">
@@ -383,9 +274,9 @@ const BrainDump: React.FC<BrainDumpProps> = ({
                                 !selectedCluster ? (
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pt-4">
                                         {clusters.map(cluster => (
-                                            <div key={cluster.clusterName} onClick={() => setSelectedCluster(cluster)} className="bg-[var(--color-surface)] p-6 rounded-[var(--border-radius-xl)] shadow-sm border border-[var(--color-border)] cursor-pointer transition-all hover:shadow-xl hover:border-[var(--color-primary-accent)] hover:-translate-y-1">
+                                            <div key={cluster.clusterName} onClick={() => setSelectedCluster(cluster)} className="content-card bg-[var(--color-surface)] p-6 rounded-[var(--border-radius-xl)] cursor-pointer transition-all hover:-translate-y-1">
                                                 <h3 className="text-xl font-bold text-[var(--color-text-primary)] truncate mb-3">{cluster.clusterName}</h3>
-                                                <div className="border-t my-4 border-[var(--color-border)]"></div>
+                                                <div className="border-t my-4 inset-divider"></div>
                                                 <div className="flex justify-between items-center text-[var(--color-text-secondary)]">
                                                     <span className="font-semibold text-sm">{cluster.itemIds.length} Thoughts</span>
                                                     <span className="font-semibold text-sm">{cluster.estimatedTime}</span>

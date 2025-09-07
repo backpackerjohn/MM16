@@ -1,6 +1,6 @@
 import React from 'react';
 
-// FIX: Update props to accept standard SVGElement props to allow `style` and other attributes.
+// Update props to accept standard SVGElement props to allow `style` and other attributes.
 const WandIcon: React.FC<React.SVGProps<SVGSVGElement>> = ({ className = "h-5 w-5", ...props }) => (
   <svg 
     className={className}

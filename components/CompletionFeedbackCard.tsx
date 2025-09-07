@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Confetti from './Confetti';
-import { Chunk, UserDifficulty, MicroHabit, HabitStats } from '../types';
+import { Chunk } from '../contracts';
+import { UserDifficulty, MicroHabit, HabitStats } from '../types';
 import { getHabitSuggestion } from '../utils/habitStacking';
 import { getHabitStats, recordHabitCompletion } from '../utils/habitAnalytics';
 import WandIcon from './icons/WandIcon';

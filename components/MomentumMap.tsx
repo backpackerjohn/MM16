@@ -1,6 +1,10 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
-import { MomentumMapData, FinishLine, Chunk, SubStep, Note, EnergyTag, Reflection, SavedTask, CompletionRecord, TimeLearningSettings, UserDifficulty } from '../types';
+// Import types from `contracts.ts` and `types.ts` correctly.
+import { MomentumMapData, FinishLine, Chunk, SubStep, Note, EnergyTag, Reflection, SavedTask } from '../contracts';
+import { CompletionRecord, TimeLearningSettings, UserDifficulty } from '../types';
+import { GamEvent } from '../utils/gamificationTypes';
 
 import FinishLineIcon from './icons/FinishLineIcon';
 import PlusIcon from './icons/PlusIcon';
@@ -29,6 +33,9 @@ import { getPersonalizedEstimate, getTimeOfDay } from '../utils/timeAnalytics';
 import CompletionFeedbackCard from './CompletionFeedbackCard';
 import DropdownMenu from './DropdownMenu';
 import MoreOptionsIcon from './icons/MoreOptionsIcon';
+import WandIcon from './icons/WandIcon';
+import InlineConfetti from './InlineConfetti';
+import CheckIcon from './icons/CheckIcon';
 
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -124,7 +131,8 @@ const generateInitialPlan = async (goal: string, history: Record<EnergyTag, Comp
         const response = await Promise.race([apiCall, timeout]);
 
         const jsonStr = (response as any).text.trim();
-        return JSON.parse(jsonStr) as MomentumMapData;
+        const data = JSON.parse(jsonStr) as Omit<MomentumMapData, 'version'>;
+        return { ...data, version: 1 };
     } catch (error) {
         console.error("Error generating initial plan:", error);
          if (error instanceof Error) {
@@ -210,7 +218,7 @@ const rePlanIncompleteChunks = async (finishLine: FinishLine, completedSubSteps:
     }
 }
 
-const generateSplitSuggestion = async (chunk: Chunk): Promise<Chunk[]> => {
+const generateSplitSuggestion = async (chunk: Chunk, finishLine: string, prevChunkTitle?: string, nextChunkTitle?: string): Promise<Chunk[]> => {
     const chunkSchema = {
         type: Type.OBJECT,
         properties: {
@@ -245,6 +253,7 @@ const generateSplitSuggestion = async (chunk: Chunk): Promise<Chunk[]> => {
     const prompt = `
       You are an expert project manager. A user finds a "chunk" of work too large and wants to split it.
       Your task is to break the given chunk into 2 or 3 smaller, more manageable chunks.
+      Use the provided context to ensure the new chunks form a logical sequence.
 
       - Each new chunk should be a logical sub-part of the original.
       - Each new chunk should have a clear, actionable title.
@@ -253,6 +262,11 @@ const generateSplitSuggestion = async (chunk: Chunk): Promise<Chunk[]> => {
       - Assign the same EnergyTag as the original.
       - Generate new unique IDs for the new chunks (e.g., "chunk-1-split-a") and their sub-steps (e.g., "ss-1-a-1").
       - Set "isComplete" to false.
+
+      **Project Context:**
+      - **Overall Goal (Finish Line):** ${finishLine}
+      - **Previous Chunk:** ${prevChunkTitle || 'N/A (This is the first chunk)'}
+      - **Next Chunk:** ${nextChunkTitle || 'N/A (This is the last chunk)'}
 
       **Original Chunk to Split:**
       ${JSON.stringify({ title: chunk.title, subSteps: chunk.subSteps.map(s => s.description), p90: chunk.p90, energyTag: chunk.energyTag }, null, 2)}
@@ -315,6 +329,39 @@ const generateUnblockerSuggestion = async (subStep: SubStep, context: string): P
     }
 };
 
+const generateChunkTitle = async (subSteps: {description: string}[]): Promise<string> => {
+    const schema = {
+        type: Type.OBJECT,
+        properties: {
+            title: { type: Type.STRING },
+        },
+        required: ['title'],
+    };
+
+    const prompt = `
+        Based on the following list of sub-tasks, generate a concise and actionable title (3-5 words) that summarizes the overall goal of these tasks.
+
+        Sub-tasks:
+        ${subSteps.map(s => `- ${s.description}`).join('\n')}
+
+        Return a single JSON object with one key, "title".
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { responseMimeType: "application/json", responseSchema: schema },
+        });
+        const jsonStr = response.text.trim();
+        const result = JSON.parse(jsonStr);
+        return result.title;
+    } catch (error) {
+        console.error("Error generating chunk title:", error);
+        throw new Error("AI failed to suggest a title.");
+    }
+}
+
 interface MomentumMapProps {
   activeMap: MomentumMapData | null;
   setActiveMap: React.Dispatch<React.SetStateAction<MomentumMapData | null>>;
@@ -325,8 +372,47 @@ interface MomentumMapProps {
   onSuccess: (message: string) => void;
 }
 
+const loadingMessages = [
+    { title: "Did you know?", text: "People with ADHD often excel in creative fields and crisis situations due to their unique way of thinking." },
+    { title: "Quick Tip:", text: "Break large tasks into tiny, manageable steps. The smaller, the better!" },
+    { title: "Inspiration", text: "Progress, not perfection. Every small step forward is a victory." },
+    { title: "ADHD Fact:", text: "Hyperfocus, the ability to concentrate intensely on an interesting project, is a common ADHD trait." },
+    { title: "Food for Thought", text: "Your brain is not broken, it just works differently. Embrace your unique strengths." },
+    { title: "Inspiration", text: "The secret of getting ahead is getting started." },
+    { title: "Did you know?", text: "Many successful entrepreneurs have ADHD, leveraging their creativity and risk-taking abilities." },
+    { title: "Quick Tip:", text: "Use visual timers to help make time feel more tangible and stay on track." },
+];
 
-const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setSavedTasks, completionHistory, onNewCompletionRecord, timeLearningSettings, onSuccess }) => {
+const LoadingIndicator: React.FC = () => {
+    const [message, setMessage] = useState(loadingMessages[0]);
+    
+    useEffect(() => {
+        const randomIndex = Math.floor(Math.random() * loadingMessages.length);
+        setMessage(loadingMessages[randomIndex]);
+        
+        const interval = setInterval(() => {
+            const newIndex = Math.floor(Math.random() * loadingMessages.length);
+            setMessage(loadingMessages[newIndex]);
+        }, 5000); // Change message every 5 seconds
+
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <div className="text-center py-20">
+            <svg className="animate-spin mx-auto h-12 w-12 text-[var(--color-primary-accent)] mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <h2 className="text-2xl font-semibold text-[var(--color-text-primary)]">{message.title}</h2>
+            <p className="text-[var(--color-text-secondary)] max-w-md mx-auto mt-2">{message.text}</p>
+        </div>
+    );
+};
+
+
+// FIX: Define BlockerType for use in handleAcceptUnblocker
+type BlockerType = Extract<GamEvent, { type: 'blocker_logged' }>['blocker'];
+
+// FIX: Change component definition to not use React.FC to solve a subtle type inference issue.
+const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory, onNewCompletionRecord, timeLearningSettings, onSuccess }: MomentumMapProps) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [view, setView] = useState<'list' | 'card'>('list');
@@ -350,6 +436,11 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
 
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    
+    const [editingEntity, setEditingEntity] = useState<{ id: string, type: 'chunk' | 'subStep', chunkId?: string, error?: string } | null>(null);
+    const [editingValue, setEditingValue] = useState('');
+    const [isSuggestingTitle, setIsSuggestingTitle] = useState<string | null>(null);
+
 
     useEffect(() => {
         if (activeMap) {
@@ -417,7 +508,8 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
 
         try {
             const newIncompleteChunks = await rePlanIncompleteChunks(editedFinishLine, completedSubSteps, incompleteChunks);
-            const newMapData = {
+            const newMapData: MomentumMapData = {
+                version: 1,
                 finishLine: editedFinishLine,
                 chunks: [...completedChunks, ...newIncompleteChunks],
             };
@@ -491,6 +583,55 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
         });
     };
 
+    const handleCompleteChunk = (chunkId: string) => {
+        setActiveMap(prev => {
+            if (!prev) return null;
+    
+            let newlyCompletedChunk: Chunk | null = null;
+            const now = new Date();
+            const nowISO = now.toISOString();
+    
+            const newChunks = prev.chunks.map(chunk => {
+                if (chunk.id !== chunkId) return chunk;
+    
+                const wasAlreadyComplete = chunk.isComplete;
+                if (wasAlreadyComplete) return chunk;
+    
+                const newSubSteps = chunk.subSteps.map(ss => ({
+                    ...ss,
+                    isComplete: true,
+                    startedAt: ss.startedAt || nowISO,
+                    completedAt: ss.completedAt || nowISO,
+                }));
+    
+                const updatedChunk = {
+                    ...chunk,
+                    subSteps: newSubSteps,
+                    isComplete: true,
+                    startedAt: chunk.startedAt || nowISO,
+                    completedAt: nowISO,
+                };
+    
+                if (updatedChunk.startedAt) {
+                    const durationMs = now.getTime() - new Date(updatedChunk.startedAt).getTime();
+                    const durationMins = Math.round(durationMs / 60000);
+                    setActualDuration(durationMins > 0 ? durationMins : 1);
+                } else {
+                    setActualDuration(updatedChunk.p50); // Fallback
+                }
+                newlyCompletedChunk = updatedChunk;
+    
+                return updatedChunk;
+            });
+    
+            if (newlyCompletedChunk) {
+                setTimeout(() => setFeedbackChunk(newlyCompletedChunk), 400);
+            }
+    
+            return { ...prev, chunks: newChunks };
+        });
+    };
+
     const handleFeedbackSubmit = (difficulty: UserDifficulty) => {
         if (!feedbackChunk) return;
 
@@ -544,7 +685,6 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
         setIsSaveModalOpen(false);
         onSuccess('Momentum Map saved! Find it on your Task Page.');
     };
-
 
     const handleSaveNote = (type: 'finishLine' | 'chunk' | 'subStep', id: string, chunkId?: string) => {
         setActiveMap(prev => {
@@ -655,7 +795,8 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
         }
     };
     
-    const handleAcceptUnblocker = (suggestionText: string) => {
+    // FIX: Update signature to match what UnblockerModal provides, even if blockerType isn't used here.
+    const handleAcceptUnblocker = (suggestionText: string, blockerType: BlockerType) => {
         if (!unblockingStep) return;
         
         setActiveMap(prev => {
@@ -686,7 +827,6 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
     };
     
     const handleToggleChunk = (chunkId: string) => {
-        // FIX: Use chunkId in the callback, not an undefined 'id'.
         setOpenChunks(prev => prev.includes(chunkId) ? prev.filter(id => id !== chunkId) : [...prev, chunkId]);
     };
     
@@ -697,6 +837,57 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
             element.classList.add('animate-pulse-once');
             setTimeout(() => element.classList.remove('animate-pulse-once'), 1500);
         }
+    };
+
+    const handleSuggestTitle = async (chunk: Chunk) => {
+        setIsSuggestingTitle(chunk.id);
+        try {
+            const title = await generateChunkTitle(chunk.subSteps);
+            setActiveMap(prev => {
+                if (!prev) return null;
+                const newChunks = prev.chunks.map(c => c.id === chunk.id ? { ...c, title } : c);
+                return { ...prev, chunks: newChunks };
+            });
+        } catch (e: any) {
+            setError(e.message);
+        } finally {
+            setIsSuggestingTitle(null);
+        }
+    };
+
+    const handleSaveEditing = () => {
+        if (!editingEntity || !activeMap) return;
+        const { id, type, chunkId } = editingEntity;
+        const value = editingValue.trim();
+
+        if (type === 'subStep') {
+            if (value === '') {
+                setEditingEntity(prev => prev ? { ...prev, error: "Description can't be empty." } : null);
+                return;
+            }
+            setActiveMap(prev => {
+                if (!prev) return null;
+                return {
+                    ...prev,
+                    chunks: prev.chunks.map(c => c.id === chunkId ? { ...c, subSteps: c.subSteps.map(ss => ss.id === id ? { ...ss, description: value } : ss) } : c)
+                };
+            });
+        }
+
+        if (type === 'chunk') {
+            const isDuplicate = activeMap.chunks.some(c => c.id !== id && c.title.toLowerCase() === value.toLowerCase());
+            if (isDuplicate) {
+                setEditingEntity(prev => prev ? { ...prev, error: "Chunk title must be unique." } : null);
+                return;
+            }
+            setActiveMap(prev => {
+                if (!prev) return null;
+                return { ...prev, chunks: prev.chunks.map(c => c.id === id ? { ...c, title: value } : c) };
+            });
+        }
+
+        setEditingEntity(null);
+        setEditingValue('');
     };
 
     const nextBestMove = useMemo(() => {
@@ -781,14 +972,6 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
             </div>
         </div>
     );
-
-    const renderLoading = () => (
-        <div className="text-center py-20">
-            <svg className="animate-spin mx-auto h-12 w-12 text-[var(--color-primary-accent)] mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <h2 className="text-2xl font-semibold text-[var(--color-text-primary)]">AI is building your roadmap...</h2>
-            <p className="text-[var(--color-text-secondary)]">This might take a moment.</p>
-        </div>
-    );
     
     const renderError = () => (
         <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-6 rounded-r-lg my-8" role="alert">
@@ -832,7 +1015,7 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
     };
 
     const renderFinishLine = () => (
-         <div className="bg-[var(--color-surface)] p-6 rounded-2xl shadow-lg border border-[var(--color-border)] mb-8 relative">
+         <div className="content-card bg-[var(--color-surface)] p-6 rounded-2xl mb-8 relative">
             <div className="flex items-start space-x-5">
                 <FinishLineIcon className="h-10 w-10 text-[var(--color-primary-accent)] mt-1 flex-shrink-0" />
                 <div className="flex-1">
@@ -901,20 +1084,39 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
     
     const renderSubStep = (chunk: Chunk, subStep: SubStep) => {
         const isEditingThisNote = editingNote?.type === 'subStep' && editingNote.id === subStep.id;
-
+        const isEditingThisSubStep = editingEntity?.type === 'subStep' && editingEntity.id === subStep.id;
+    
         return (
             <div key={subStep.id} id={subStep.id} className="group flex items-start space-x-3 p-2 rounded-lg hover:bg-[var(--color-surface-sunken)]/80 transition-colors">
                 <input
                     type="checkbox"
                     checked={subStep.isComplete}
                     onChange={() => handleToggleSubStep(chunk.id, subStep.id)}
-                    className="mt-1 h-5 w-5 rounded-md border-stone-300 text-[var(--color-primary-accent)] focus:ring-[var(--color-primary-accent)] focus:ring-offset-2"
+                    className="animated-checkbox mt-1"
                     aria-label={subStep.description}
                 />
                 <div className="flex-1">
-                    <span className={`transition-colors ${subStep.isComplete ? 'text-[var(--color-text-subtle)] line-through' : 'text-[var(--color-text-primary)]'} ${subStep.isBlocked ? 'text-stone-400 italic' : ''}`}>
-                        {subStep.description}
-                    </span>
+                    {isEditingThisSubStep ? (
+                         <div>
+                            <input
+                                type="text"
+                                value={editingValue}
+                                onChange={(e) => setEditingValue(e.target.value)}
+                                onBlur={handleSaveEditing}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSaveEditing()}
+                                className={`w-full bg-transparent p-0.5 rounded focus:outline-none focus:ring-1 ring-[var(--color-primary-accent)] ${editingEntity?.error ? 'ring-2 ring-red-500' : ''}`}
+                                autoFocus
+                            />
+                            {editingEntity?.error && <p className="text-xs text-red-600 mt-1">{editingEntity.error}</p>}
+                        </div>
+                    ) : (
+                        <span 
+                            onDoubleClick={() => { setEditingEntity({ id: subStep.id, type: 'subStep', chunkId: chunk.id }); setEditingValue(subStep.description); }}
+                            className={`transition-colors ${subStep.isComplete ? 'text-[var(--color-text-subtle)] line-through' : 'text-[var(--color-text-primary)]'} ${subStep.isBlocked ? 'text-stone-400 italic' : ''}`}>
+                            {subStep.description}
+                        </span>
+                    )}
+    
                     {subStep.note && !isEditingThisNote && (
                         <p className="mt-2 text-sm text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] p-2 rounded-md whitespace-pre-wrap border">{subStep.note.text}</p>
                     )}
@@ -925,14 +1127,14 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
                         />
                     )}
                 </div>
-                <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center space-x-1 ml-auto pl-2">
                     {!subStep.isComplete && (
                          <button
                             onClick={() => console.log("Timer started for", subStep.id)}
                             title="Start timer for this step"
-                            className="p-1.5 rounded-full hover:bg-[var(--color-surface)]"
+                            className="p-1.5 rounded-full text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-primary-accent)] transition-colors"
                         >
-                            <PlayIcon className="h-5 w-5 text-green-600" />
+                            <PlayIcon className="h-5 w-5" />
                         </button>
                     )}
                     <button 
@@ -947,45 +1149,47 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
                                 });
                             }
                         }}
-                        className={`p-1.5 rounded-full transition-colors ${isEditingThisNote ? 'bg-[var(--color-primary-accent)] text-white hover:bg-[var(--color-primary-accent-hover)]' : 'text-[var(--color-text-subtle)] hover:bg-[var(--color-surface)]'}`} 
+                        className={`p-1.5 rounded-full transition-colors ${isEditingThisNote ? 'bg-[var(--color-primary-accent)] text-white hover:bg-[var(--color-primary-accent-hover)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]'}`} 
                         title="Add/Edit Note"
                     >
                         <NoteIcon hasNote={!!subStep.note} className="h-5 w-5" />
                     </button>
-                    {!subStep.isComplete && (
-                        <DropdownMenu
-                            trigger={
+                    <DropdownMenu
+                        trigger={
+                            <button
+                                title="More options"
+                                className="p-1.5 rounded-full text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                            >
+                                <MoreOptionsIcon className="h-5 w-5" />
+                            </button>
+                        }
+                    >
+                        {!subStep.isComplete && (
+                            <>
                                 <button
-                                    title="More options"
-                                    className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text-primary)]"
+                                    onClick={() => handleToggleBlocked(chunk.id, subStep.id)}
+                                    className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
                                 >
-                                    <MoreOptionsIcon className="h-5 w-5" />
+                                    <LockIcon className={`h-4 w-4 ${subStep.isBlocked ? 'text-red-600' : 'text-stone-500'}`} />
+                                    <span>{subStep.isBlocked ? "Unblock Task" : "Mark as Blocked"}</span>
                                 </button>
-                            }
-                        >
-                            <button
-                                onClick={() => handleToggleBlocked(chunk.id, subStep.id)}
-                                className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
-                            >
-                                <LockIcon className={`h-4 w-4 ${subStep.isBlocked ? 'text-red-600' : 'text-stone-500'}`} />
-                                <span>{subStep.isBlocked ? "Unblock Task" : "Mark as Blocked"}</span>
-                            </button>
-                             <button
-                                onClick={() => handleSkipSubStep(chunk.id, subStep.id)}
-                                className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
-                            >
-                                <SkipIcon className="h-4 w-4 text-blue-600" />
-                                <span>Skip for now</span>
-                            </button>
-                            <button
-                                onClick={() => handleOpenUnblockerModal(chunk.id, subStep)}
-                                className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
-                            >
-                                <HandRaisedIcon className="h-4 w-4 text-yellow-600" />
-                                <span>I'm stuck!</span>
-                            </button>
-                        </DropdownMenu>
-                    )}
+                                 <button
+                                    onClick={() => handleSkipSubStep(chunk.id, subStep.id)}
+                                    className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
+                                >
+                                    <SkipIcon className="h-4 w-4 text-blue-600" />
+                                    <span>Skip for now</span>
+                                </button>
+                                <button
+                                    onClick={() => handleOpenUnblockerModal(chunk.id, subStep)}
+                                    className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
+                                >
+                                    <HandRaisedIcon className="h-4 w-4 text-yellow-600" />
+                                    <span>I'm stuck!</span>
+                                </button>
+                            </>
+                        )}
+                    </DropdownMenu>
                 </div>
             </div>
         );
@@ -1008,11 +1212,45 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
         if (progressPercent > 90) progressBarColor = 'bg-red-500';
         else if (progressPercent > 75) progressBarColor = 'bg-yellow-500';
 
+        const isEditingThisChunk = editingEntity?.type === 'chunk' && editingEntity.id === chunk.id;
+        const canSuggestTitle = !chunk.title && chunk.subSteps.length >= 2;
+        const isSuggestingThisTitle = isSuggestingTitle === chunk.id;
+
         return (
             <div>
-                <div className="flex items-center space-x-3">
+                <div className="flex items-start space-x-3">
                     <div className="flex-1">
-                        <h3 className="text-xl font-bold text-[var(--color-text-primary)]">{chunk.title}</h3>
+                        {isEditingThisChunk ? (
+                            <div>
+                                <input
+                                    type="text"
+                                    value={editingValue}
+                                    onChange={(e) => setEditingValue(e.target.value)}
+                                    onBlur={handleSaveEditing}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSaveEditing()}
+                                    className={`w-full text-xl font-bold bg-transparent p-0.5 rounded focus:outline-none focus:ring-1 ring-[var(--color-primary-accent)] ${editingEntity?.error ? 'ring-2 ring-red-500' : ''}`}
+                                    autoFocus
+                                />
+                                {editingEntity?.error && <p className="text-xs text-red-600 mt-1">{editingEntity.error}</p>}
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <h3 className="text-xl font-bold text-[var(--color-text-primary)]" onDoubleClick={() => { setEditingEntity({ id: chunk.id, type: 'chunk' }); setEditingValue(chunk.title); }}>
+                                    {chunk.title || <span className="text-[var(--color-text-subtle)] italic">Untitled Chunk</span>}
+                                </h3>
+                                {canSuggestTitle && (
+                                    <button 
+                                        onClick={() => handleSuggestTitle(chunk)} 
+                                        disabled={isSuggestingThisTitle}
+                                        className="flex items-center gap-1.5 px-2 py-1 text-xs font-semibold text-[var(--color-primary-accent)] bg-[var(--color-surface-sunken)] rounded-full hover:bg-[var(--color-border)] disabled:opacity-50"
+                                        title="Suggest a title with AI"
+                                    >
+                                        {isSuggestingThisTitle ? <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle opacity="25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path opacity="75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <WandIcon className="h-4 w-4" />}
+                                        <span>{isSuggestingThisTitle ? 'Suggesting...' : 'Suggest Title'}</span>
+                                    </button>
+                                )}
+                            </div>
+                        )}
                         <div className="flex items-center space-x-4 text-sm text-[var(--color-text-secondary)] mt-1 flex-wrap">
                             <div className="flex items-center space-x-1.5" title={chunk.confidenceReason || `P50-P90 Estimate: ${p50}-${p90}m`}>
                                 <ClockIcon className="h-4 w-4" />
@@ -1061,58 +1299,121 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
 
     const renderListView = () => (
         <div className="space-y-4">
-            {chunksWithPersonalizedEstimates.map(chunk => (
-                <div key={chunk.id} data-chunkid={chunk.id} className={`bg-[var(--color-surface)] p-4 rounded-xl shadow-sm border border-[var(--color-border)] transition-all duration-300 ${chunk.isComplete ? 'opacity-60 bg-[var(--color-surface-sunken)]' : ''}`}>
-                    <div className="flex items-center">
-                        <div className="flex-1 cursor-pointer" onClick={() => handleToggleChunk(chunk.id)}>
-                            {renderChunkHeader(chunk, chunk.id === activeChunk?.id, elapsedSeconds)}
+            {chunksWithPersonalizedEstimates.map(chunk => {
+                const cardClasses = `content-card p-4 rounded-xl transition-all duration-300 ${
+                    chunk.isComplete ? 'opacity-70 bg-[var(--color-surface-sunken)] overflow-hidden relative' : 'bg-[var(--color-surface)]'
+                } ${
+                    [EnergyTag.Creative, EnergyTag.Social].includes(chunk.energyTag) && !chunk.isComplete ? 'jade-mint' : ''
+                }`;
+                return (
+                    <div key={chunk.id} data-chunkid={chunk.id} className={cardClasses}>
+                        {chunk.isComplete && <InlineConfetti />}
+                        <div className="flex items-center">
+                            <div className="flex-1 cursor-pointer flex items-center" onClick={(e) => { e.stopPropagation(); if (!chunk.isComplete) handleToggleChunk(chunk.id); }}>
+                                <div className="flex-1">
+                                    {renderChunkHeader(chunk, chunk.id === activeChunk?.id, elapsedSeconds)}
+                                </div>
+                                <div className={`p-1 rounded-full text-[var(--color-text-subtle)] ${chunk.isComplete ? 'cursor-default' : 'hover:bg-[var(--color-surface-sunken)]'}`}>
+                                    {openChunks.includes(chunk.id) && !chunk.isComplete ? <ChevronDownIcon className="h-6 w-6"/> : <ChevronRightIcon className="h-6 w-6"/>}
+                                </div>
+                            </div>
+                             <div className="flex items-center space-x-1 pl-2">
+                                {!chunk.isComplete && (
+                                   <>
+                                     <button
+                                         onClick={(e) => { e.stopPropagation(); setChunkToSplit(chunk); }}
+                                         title="Split into smaller chunks"
+                                         className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                                     >
+                                         <SplitIcon className="h-5 w-5" />
+                                     </button>
+                                     <DropdownMenu
+                                         trigger={
+                                             <button
+                                                 onClick={(e) => e.stopPropagation()}
+                                                 title="More chunk options"
+                                                 className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                                             >
+                                                 <MoreOptionsIcon className="h-5 w-5" />
+                                             </button>
+                                         }
+                                     >
+                                         <button
+                                             onClick={() => handleCompleteChunk(chunk.id)}
+                                             className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
+                                         >
+                                             <CheckIcon className="h-4 w-4 text-green-600" />
+                                             <span>Mark Chunk as Complete</span>
+                                         </button>
+                                     </DropdownMenu>
+                                   </>
+                                )}
+                            </div>
                         </div>
-                         <div className="flex items-center space-x-1 pl-2">
-                             {!chunk.isComplete && (
-                                <button
-                                    onClick={() => setChunkToSplit(chunk)}
-                                    title="Split into smaller chunks"
-                                    className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
-                                >
-                                    <SplitIcon className="h-5 w-5" />
-                                </button>
-                            )}
-                            <button onClick={() => handleToggleChunk(chunk.id)} className="p-1 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)]">
-                                {openChunks.includes(chunk.id) ? <ChevronDownIcon className="h-6 w-6"/> : <ChevronRightIcon className="h-6 w-6"/>}
-                            </button>
-                        </div>
+                        {!chunk.isComplete && openChunks.includes(chunk.id) && (
+                            <div className="mt-4 pt-4 border-t inset-divider space-y-1">
+                               {chunk.subSteps.map(ss => renderSubStep(chunk, ss))}
+                            </div>
+                        )}
                     </div>
-                    {openChunks.includes(chunk.id) && (
-                        <div className="mt-4 pt-4 border-t border-[var(--color-border)]/80 space-y-1">
-                           {chunk.subSteps.map(ss => renderSubStep(chunk, ss))}
-                        </div>
-                    )}
-                </div>
-            ))}
+                )
+            })}
         </div>
     );
 
     const renderCardView = () => (
          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {chunksWithPersonalizedEstimates.map(chunk => (
-                <div key={chunk.id} data-chunkid={chunk.id} className={`bg-[var(--color-surface)] p-6 rounded-2xl shadow-sm border border-[var(--color-border)] flex flex-col transition-all duration-300 ${chunk.isComplete ? 'opacity-60 bg-[var(--color-surface-sunken)]' : 'hover:shadow-lg hover:border-[var(--color-primary-accent)] hover:-translate-y-1'}`}>
-                    <div className="flex items-start">
-                         <div className="flex-1">{renderChunkHeader(chunk, chunk.id === activeChunk?.id, elapsedSeconds)}</div>
+            {chunksWithPersonalizedEstimates.map(chunk => {
+                 const cardClasses = `content-card p-6 rounded-2xl flex flex-col transition-all duration-300 ${
+                    chunk.isComplete ? 'opacity-70 bg-[var(--color-surface-sunken)] overflow-hidden relative' : 'bg-[var(--color-surface)] hover:-translate-y-1'
+                } ${
+                    [EnergyTag.Creative, EnergyTag.Social].includes(chunk.energyTag) && !chunk.isComplete ? 'jade-mint' : ''
+                }`;
+                return (
+                    <div key={chunk.id} data-chunkid={chunk.id} className={cardClasses}>
+                        {chunk.isComplete && <InlineConfetti />}
+                        <div className="flex items-start">
+                            <div className="flex-1">{renderChunkHeader(chunk, chunk.id === activeChunk?.id, elapsedSeconds)}</div>
+                            <div className="flex items-center -mt-1 -mr-1">
+                                {!chunk.isComplete && (
+                                    <>
+                                        <button
+                                            onClick={() => setChunkToSplit(chunk)}
+                                            title="Split into smaller chunks"
+                                            className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                                        >
+                                            <SplitIcon className="h-5 w-5" />
+                                        </button>
+                                        <DropdownMenu
+                                            trigger={
+                                                <button
+                                                    title="More chunk options"
+                                                    className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)]"
+                                                >
+                                                    <MoreOptionsIcon className="h-5 w-5" />
+                                                </button>
+                                            }
+                                        >
+                                            <button
+                                                onClick={() => handleCompleteChunk(chunk.id)}
+                                                className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"
+                                            >
+                                                <CheckIcon className="h-4 w-4 text-green-600" />
+                                                <span>Mark Chunk as Complete</span>
+                                            </button>
+                                        </DropdownMenu>
+                                    </>
+                                )}
+                            </div>
+                        </div>
                         {!chunk.isComplete && (
-                             <button
-                                onClick={() => setChunkToSplit(chunk)}
-                                title="Split into smaller chunks"
-                                className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-text-primary)] -mt-1 -mr-1"
-                            >
-                                <SplitIcon className="h-5 w-5" />
-                            </button>
+                            <div className="mt-4 pt-4 border-t inset-divider space-y-1 flex-1">
+                                {chunk.subSteps.map(ss => renderSubStep(chunk, ss))}
+                            </div>
                         )}
                     </div>
-                    <div className="mt-4 pt-4 border-t border-[var(--color-border)]/80 space-y-1 flex-1">
-                        {chunk.subSteps.map(ss => renderSubStep(chunk, ss))}
-                    </div>
-                </div>
-            ))}
+                )
+            })}
         </div>
     );
 
@@ -1185,151 +1486,170 @@ const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setS
                     <div className="flex justify-center items-center space-x-4">
                         <button 
                             onClick={handleExport}
-                            className="flex items-center space-x-2 px-5 py-3 text-sm font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface)] border border-[var(--color-border-hover)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all duration-300 shadow-sm"
-                        >
+                            className="flex items-center space-x-2 px-5 py-3 text-sm font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all border border-[var(--color-border)]">
                             <ShareIcon className="h-5 w-5" />
-                            <span>Export Roadmap</span>
+                            <span>Export as Text</span>
                         </button>
-                        <button
-                            onClick={() => {
-                                setActiveMap(null);
-                                setGoalInput('');
-                            }}
-                            className="flex items-center space-x-2 px-5 py-3 text-sm font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] hover:bg-[var(--color-primary-accent-hover)] rounded-lg transition-all duration-300 shadow-md">
-                            <span>Start a New Map</span>
+                        <button 
+                            onClick={() => setActiveMap(null)} 
+                            className="flex items-center space-x-2 px-5 py-3 text-sm font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] hover:bg-[var(--color-primary-accent-hover)] rounded-lg transition-all shadow-md">
+                            Start a New Map
                         </button>
                     </div>
                 </div>
             </div>
-        )
-    }
+        );
+    };
 
-
-    if (isLoading) return <main className="container mx-auto p-8">{renderLoading()}</main>;
-
-    if (!activeMap) {
+    if (isLoading && !activeMap) {
         return (
             <main className="container mx-auto p-8">
-                {error ? renderError() : (
-                    <div className="text-center py-20 bg-[var(--color-surface)] rounded-2xl shadow-lg border max-w-3xl mx-auto">
-                        <FinishLineIcon className="h-12 w-12 text-[var(--color-primary-accent)] mx-auto mb-4" />
-                        <h2 className="text-3xl font-bold text-[var(--color-text-primary)]">What's Your Finish Line?</h2>
-                        <p className="text-[var(--color-text-secondary)] mt-2 mb-6 max-w-lg mx-auto">Describe your high-level goal, and the AI will generate a step-by-step roadmap to get you there.</p>
-                        <div className="flex flex-col sm:flex-row justify-center items-stretch gap-2 mt-4 px-8">
-                            <input
-                                type="text"
-                                value={goalInput}
-                                onChange={(e) => setGoalInput(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') handleGenerateInitialPlan(goalInput); }}
-                                placeholder="e.g., Launch a new productivity app"
-                                className="w-full max-w-md p-4 border border-[var(--color-border-hover)] rounded-lg focus:ring-2 focus:ring-[var(--color-primary-accent)] transition-shadow text-base bg-transparent"
-                                autoFocus
-                            />
-                            <button 
-                                onClick={() => handleGenerateInitialPlan(goalInput)} 
-                                disabled={!goalInput.trim()}
-                                className="w-full sm:w-auto px-6 py-4 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md disabled:bg-stone-400 flex items-center justify-center text-base"
-                            >
-                                Generate Roadmap
-                            </button>
-                        </div>
-                    </div>
-                )}
+                <LoadingIndicator />
             </main>
         );
     }
 
-    if (isProjectComplete) return <main className="container mx-auto p-8">{renderCompletionScreen()}</main>;
+    if (error && !activeMap) {
+        return (
+            <main className="container mx-auto p-8">
+                {renderError()}
+            </main>
+        );
+    }
+
+    if (!activeMap) {
+        return (
+            <main className="container mx-auto p-8 text-center max-w-2xl">
+                <div className="bg-[var(--color-surface)] p-8 rounded-2xl shadow-lg border border-[var(--color-border)] content-card">
+                    <h1 className="text-4xl font-bold text-[var(--color-text-primary)] mb-4">
+                        What's your next big goal?
+                    </h1>
+                    <p className="text-[var(--color-text-secondary)] mb-6">
+                        Describe what you want to accomplish, and the AI will generate a step-by-step Momentum Map to get you there.
+                    </p>
+                    <form onSubmit={(e) => { e.preventDefault(); handleGenerateInitialPlan(goalInput); }}>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={goalInput}
+                                onChange={(e) => setGoalInput(e.target.value)}
+                                placeholder="e.g., Launch a new marketing campaign for Q3"
+                                className="flex-1 px-4 py-3 bg-transparent border border-[var(--color-border-hover)] rounded-lg focus:ring-2 focus:ring-[var(--color-primary-accent)] transition-shadow text-base"
+                                aria-label="Goal input"
+                            />
+                            <button
+                                type="submit"
+                                disabled={isLoading || !goalInput.trim()}
+                                className="px-6 py-3 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md disabled:bg-stone-400 flex items-center"
+                            >
+                                {isLoading ? 'Generating...' : 'Create Map'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </main>
+        );
+    }
     
+    if (isProjectComplete) {
+        return (
+             <main className="container mx-auto p-8">
+                {renderCompletionScreen()}
+            </main>
+        )
+    }
+
     return (
         <main className="container mx-auto p-8">
-            <style>{`.animate-pulse-once { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1); }`}</style>
-            
-            {renderNextBestMoveRibbon()}
-
-            {renderFinishLine()}
-
-            <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-bold text-[var(--color-text-primary)]">Your Roadmap</h2>
-                <div className="flex items-center space-x-1 p-1 bg-[var(--color-surface-sunken)] rounded-lg">
-                    <button 
-                        onClick={() => setView('list')} 
-                        className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${view === 'list' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}
-                    >
-                        <ListViewIcon className="h-5 w-5" />
-                        <span>List</span>
+             <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
+                <div className="flex items-center space-x-2 p-1 bg-[var(--color-surface-sunken)] rounded-lg">
+                    <button onClick={() => setView('list')} className={`px-3 py-1.5 text-sm font-semibold rounded-md flex items-center gap-2 ${view === 'list' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}>
+                        <ListViewIcon className="h-5 w-5" /> List
                     </button>
-                    <button 
-                        onClick={() => setView('card')} 
-                        className={`flex items-center space-x-2 px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${view === 'card' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}
-                    >
-                        <CardViewIcon className="h-5 w-5" />
-                        <span>Card</span>
+                    <button onClick={() => setView('card')} className={`px-3 py-1.5 text-sm font-semibold rounded-md flex items-center gap-2 ${view === 'card' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}>
+                        <CardViewIcon className="h-5 w-5" /> Card
+                    </button>
+                </div>
+                <div className="flex items-center space-x-2">
+                    <button onClick={() => {
+                        setActiveMap(null);
+                        onSuccess("Map cleared. Ready for your next goal!");
+                    }} className="px-4 py-2 text-sm font-semibold text-[var(--color-danger)] bg-transparent hover:bg-red-100 rounded-lg transition-colors">
+                        Clear & Start New Map
+                    </button>
+                    <button onClick={() => setIsSaveModalOpen(true)} className="px-4 py-2 text-sm font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] hover:bg-[var(--color-primary-accent-hover)] rounded-lg transition-all shadow-sm">
+                        Save Map
                     </button>
                 </div>
             </div>
 
             {error && renderError()}
             
-            {view === 'list' ? renderListView() : renderCardView()}
+            {!error && (
+                <>
+                    {renderNextBestMoveRibbon()}
+                    {renderFinishLine()}
+                    {view === 'list' ? renderListView() : renderCardView()}
+                </>
+            )}
 
-            <CompletionFeedbackCard
-                isOpen={!!feedbackChunk}
-                chunk={feedbackChunk!}
-                actualDuration={actualDuration}
-                newEstimate={feedbackChunk ? getPersonalizedEstimate(
-                    completionHistory, 
-                    { 
-                        energyTag: feedbackChunk.energyTag, 
-                        subStepCount: feedbackChunk.subSteps.length,
-                        timeOfDay: getTimeOfDay(new Date()),
-                        dayOfWeek: new Date().getDay(),
-                    },
-                    timeLearningSettings.sensitivity
-                ) : null}
-                onFeedback={handleFeedbackSubmit}
-                onFlowComplete={handleCompletionFlowEnd}
-            />
-            <ReflectionModal
-                isOpen={!!reflectingChunk}
-                onClose={() => setReflectingChunk(null)}
-                onSave={handleSaveReflection}
-                chunk={reflectingChunk}
-                onSuccess={onSuccess}
-            />
-            <SplitChunkModal
-                isOpen={!!chunkToSplit}
-                onClose={() => setChunkToSplit(null)}
-                onSave={handleSaveSplit}
-                chunkToSplit={chunkToSplit}
-                onGenerateSplit={generateSplitSuggestion}
-            />
-            <UnblockerModal
-                isOpen={!!unblockingStep}
-                onClose={() => setUnblockingStep(null)}
-                onAccept={handleAcceptUnblocker}
-                suggestion={unblockerSuggestion}
-                isLoading={isGeneratingSuggestion}
-                blockedStepText={unblockingStep?.subStep.description || ''}
-            />
+            {reflectingChunk && (
+                <ReflectionModal
+                    isOpen={!!reflectingChunk}
+                    onClose={() => setReflectingChunk(null)}
+                    onSave={handleSaveReflection}
+                    chunk={reflectingChunk}
+                    onSuccess={onSuccess}
+                />
+            )}
+            
+            {feedbackChunk && (
+                <CompletionFeedbackCard
+                    isOpen={!!feedbackChunk}
+                    chunk={feedbackChunk}
+                    actualDuration={actualDuration}
+                    newEstimate={null}
+                    onFeedback={handleFeedbackSubmit}
+                    onFlowComplete={handleCompletionFlowEnd}
+                />
+            )}
+            
+            {chunkToSplit && (
+                <SplitChunkModal
+                    isOpen={!!chunkToSplit}
+                    onClose={() => setChunkToSplit(null)}
+                    onSave={handleSaveSplit}
+                    chunkToSplit={chunkToSplit}
+                    // FIX: Pass an inline function to `onGenerateSplit` to provide the necessary context (finishLine, surrounding chunks) to `generateSplitSuggestion`.
+                    onGenerateSplit={(chunk) => {
+                        if (!activeMap) {
+                            return Promise.reject(new Error("Cannot generate split suggestion: no active map."));
+                        }
+                        const chunkIndex = activeMap.chunks.findIndex(c => c.id === chunk.id);
+                        const prevChunkTitle = chunkIndex > 0 ? activeMap.chunks[chunkIndex - 1].title : undefined;
+                        const nextChunkTitle = chunkIndex < activeMap.chunks.length - 1 ? activeMap.chunks[chunkIndex + 1].title : undefined;
+                        return generateSplitSuggestion(chunk, activeMap.finishLine.statement, prevChunkTitle, nextChunkTitle);
+                    }}
+                />
+            )}
+
+            {unblockingStep && (
+                <UnblockerModal
+                    isOpen={!!unblockingStep}
+                    onClose={() => setUnblockingStep(null)}
+                    onAccept={handleAcceptUnblocker}
+                    suggestion={unblockerSuggestion}
+                    isLoading={isGeneratingSuggestion}
+                    blockedStepText={unblockingStep.subStep.description}
+                />
+            )}
+
             <SaveMapModal
                 isOpen={isSaveModalOpen}
                 onClose={() => setIsSaveModalOpen(false)}
                 onSave={handleSaveMap}
             />
-             <div className="fixed bottom-8 left-8 z-50">
-                <button
-                    onClick={() => setIsSaveModalOpen(true)}
-                    disabled={!activeMap}
-                    className="px-5 py-3 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-full hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-lg flex items-center space-x-3 disabled:bg-stone-400 disabled:cursor-not-allowed"
-                    title="Save Momentum Map"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v12l-5-3-5 3V4z" /></svg>
-                    <span className="hidden sm:inline">Save Momentum Map</span>
-                </button>
-            </div>
         </main>
     );
 };
-
 export default MomentumMap;

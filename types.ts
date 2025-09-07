@@ -1,26 +1,13 @@
-export interface Note {
-  text: string;
-  shareWithAI: boolean;
-}
+// General utility type for functions that can fail, returning either data or an error.
+export type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
-export interface BrainDumpItem {
-  id: string;
-  item: string;
-  tags: string[];
-  isUrgent: boolean;
-  categoryId?: string;
-  blockers?: string[];
-  timeEstimateMinutesP50?: number;
-  timeEstimateMinutesP90?: number;
-}
-
+// --- Brain Dump & AI Suggestion Types ---
 export interface Cluster {
   clusterName: string;
   itemIds: string[];
   estimatedTime: string;
 }
 
-// New Types for Suggestions
 export interface RefinementSuggestion {
   itemId: string;
   proposedTags: string[];
@@ -47,80 +34,8 @@ export interface ClusterPlan {
     summary: string; // <= 200 chars
 }
 
-// Momentum Map Types
-export interface FinishLine {
-  statement: string;
-  acceptanceCriteria: string[];
-  note?: Note;
-}
 
-export interface SubStep {
-  id: string;
-  description: string;
-  isComplete: boolean;
-  isBlocked?: boolean;
-  blockers?: string[];
-  note?: Note;
-  startedAt?: string; // ISO string
-  completedAt?: string; // ISO string
-}
-
-export enum EnergyTag {
-  Creative = 'Creative',
-  Tedious = 'Tedious',
-  Admin = 'Admin',
-  Social = 'Social',
-  Errand = 'Errand',
-}
-
-export interface Reflection {
-  helped: string;
-  trippedUp: string;
-}
-
-export interface Chunk {
-  id: string;
-  title: string;
-  subSteps: SubStep[];
-  p50: number; // minutes
-  p90: number; // minutes
-  energyTag: EnergyTag;
-  blockers: string[];
-  isComplete: boolean;
-  note?: Note;
-  reflection?: Reflection;
-  startedAt?: string; // ISO string
-  completedAt?: string; // ISO string
-  
-  // New fields for personalized estimation
-  personalizedP50?: number;
-  personalizedP90?: number;
-  confidence?: 'low' | 'medium' | 'high';
-  confidenceValue?: number;
-  confidenceReason?: string;
-  warning?: string;
-}
-
-export interface MomentumMapData {
-  finishLine: FinishLine;
-  chunks: Chunk[];
-}
-
-export interface SavedTask {
-  id: string;
-  nickname?: string;
-  note: string;
-  savedAt: string; // ISO string
-  mapData: MomentumMapData;
-  progress: {
-    completedChunks: number;
-    totalChunks: number;
-    completedSubSteps: number;
-    totalSubSteps: number;
-  };
-}
-
-// Calendar and Reminder Types
+// --- Calendar and Reminder Types ---
 export enum ContextTag {
   Rushed = 'rushed',
   Relaxed = 'relaxed',
@@ -169,32 +84,27 @@ export interface SmartReminder {
   offsetMinutes: number; // How many minutes before/after (+) event.startTime
   message: string;
   
-  // "Smart" properties
-  why: string; // "Why this time" explanation
-  isLocked: boolean; // "don't auto-shift this reminder"
-  isExploratory: boolean; // Flag for a test/exploration slot
+  why: string; 
+  isLocked: boolean;
+  isExploratory: boolean;
   status: ReminderStatus;
   
-  // For micro-learning
-  snoozeHistory: number[]; // Array of snooze durations in minutes [10, 10, 10]
-  lastShiftSuggestion?: string; // ISO String, to prevent re-prompting
+  snoozeHistory: number[];
+  lastShiftSuggestion?: string;
   
-  // For snoozing
-  snoozedUntil: string | null; // ISO string
+  snoozedUntil: string | null;
 
-  // V2 System Additions
-  successHistory: SuccessState[]; // For info panel
-  isStackedHabit?: boolean; // For habit stacking guardrail
-  habitId?: string; // Links to a MicroHabit ID
-  originalOffsetMinutes?: number; // For reverting exploratory changes
-  lastInteraction?: string; // ISO String, for detecting ignored reminders
-  flexibilityMinutes?: number; // How many minutes reminder can be shifted
-  allowExploration?: boolean; // User setting to allow AI to test new times
+  successHistory: SuccessState[];
+  isStackedHabit?: boolean;
+  habitId?: string;
+  originalOffsetMinutes?: number;
+  lastInteraction?: string;
+  flexibilityMinutes?: number;
+  allowExploration?: boolean;
 }
 
 
 // --- Time Learning Types ---
-
 export enum UserDifficulty {
     Easier = 0.8,
     Typical = 1.0,
@@ -206,8 +116,8 @@ export type TimeOfDay = 'morning' | 'afternoon' | 'evening';
 export interface CompletionRecord {
   id: string; 
   actualDurationMinutes: number; 
-  estimatedDurationMinutes: number; // The P50 estimate at the time of completion
-  energyTag: EnergyTag; 
+  estimatedDurationMinutes: number;
+  energyTag: 'Creative' | 'Tedious' | 'Admin' | 'Social' | 'Errand'; 
   completedAt: string; // ISO string
   subStepCount: number; 
   dayOfWeek: number; // 0=Sun, 6=Sat
@@ -218,7 +128,8 @@ export interface CompletionRecord {
 
 export interface TimeLearningSettings {
     isEnabled: boolean;
-    sensitivity: number; // e.g., 0.3 for default alpha in EWMA
+    sensitivity: number;
+    density: 'comfortable' | 'compact';
 }
 
 // --- Theming Types ---
@@ -227,10 +138,10 @@ export type ThemeName = 'Focus' | 'Creative' | 'Recovery' | 'Evening';
 export type PresetName = 'Default' | 'High Contrast' | 'Reduced Motion' | 'Minimal Stimulation';
 
 export interface CustomThemeProperties {
-    animationSpeed: number; // Multiplier, e.g., 1 is normal, 0 is none
-    colorIntensity: number; // Multiplier, e.g., 1 is normal, 0 is none
-    uiContrastLevel: number; // Multiplier, e.g., 1 is normal
-    textContrastLevel: number; // Multiplier, e.g., 1 is normal
+    animationSpeed: number;
+    colorIntensity: number;
+    uiContrastLevel: number;
+    textContrastLevel: number;
 }
 
 export interface ThemeSettings {
@@ -238,12 +149,10 @@ export interface ThemeSettings {
     manualTheme: ThemeName;
     customThemeProperties: CustomThemeProperties;
     userOverrides: {
-      lastOverride?: number; // timestamp
-      // could add more complex tracking here later
+      lastOverride?: number;
     };
 }
 
-// This is a map of HSL values, not final CSS colors
 export interface ThemeProperties {
     '--color-bg-h': number; '--color-bg-s': string; '--color-bg-l': string;
     '--color-surface-h': number; '--color-surface-s': string; '--color-surface-l': string;
@@ -282,7 +191,7 @@ export interface MicroHabit {
   durationMinutes: number;
   energyRequirement: HabitEnergyRequirement;
   optimalContexts: {
-    energyTags?: EnergyTag[]; // When to suggest based on completed chunk's tag
+    energyTags?: ('Creative' | 'Tedious' | 'Admin' | 'Social' | 'Errand')[];
   };
 }
 

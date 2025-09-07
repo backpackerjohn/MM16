@@ -1,4 +1,5 @@
-import { EnergyTag, CompletionRecord, UserDifficulty, TimeOfDay } from '../types';
+import { EnergyTag } from '../contracts';
+import { CompletionRecord, UserDifficulty, TimeOfDay } from '../types';
 
 const HISTORY_KEY = 'momentumMapCompletionHistory';
 const MAX_RECORDS_PER_TAG = 100;

@@ -1,6 +1,11 @@
+
+
+
 import { initializeApp } from 'firebase/app';
-import { getFirestore, initializeFirestore } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+// FIX: Use a named import for 'initializeFirestore' to resolve the module resolution error.
+import { initializeFirestore } from 'firebase/firestore';
+// Use modular imports for firebase/auth to resolve member export errors.
+import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: process.env.FIREBASE_API_KEY,
@@ -21,6 +26,7 @@ if (typeof window !== 'undefined' && firebaseConfig.projectId) {
     app = initializeApp(firebaseConfig);
     
     // Initialize Firestore with settings to handle potential issues with undefined properties.
+    // FIX: Call the directly imported `initializeFirestore` function.
     db = initializeFirestore(app, {
       ignoreUndefinedProperties: true,
     });

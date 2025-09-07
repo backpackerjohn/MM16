@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import Button from './ui/Button';
+import ModalFooter from './ui/ModalFooter';
+import { GamEvent } from '../utils/gamificationTypes';
+
+// FIX: Use `Extract` to correctly derive the `BlockerType` from the `GamEvent` discriminated union.
+type BlockerType = Extract<GamEvent, { type: 'blocker_logged' }>['blocker'];
 
 interface UnblockerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAccept: (suggestionText: string) => void;
+  onAccept: (suggestionText: string, blockerType: BlockerType) => void;
   suggestion: string;
   isLoading: boolean;
   blockedStepText: string;
@@ -18,6 +24,7 @@ const UnblockerModal: React.FC<UnblockerModalProps> = ({
   blockedStepText
 }) => {
   const [editedSuggestion, setEditedSuggestion] = useState('');
+  const [blockerType, setBlockerType] = useState<BlockerType>('unclear');
 
   useEffect(() => {
     if (suggestion) {
@@ -40,11 +47,18 @@ const UnblockerModal: React.FC<UnblockerModalProps> = ({
   }, [isOpen, onClose]);
 
   const handleAccept = () => {
-    onAccept(editedSuggestion);
+    onAccept(editedSuggestion, blockerType);
     onClose();
   };
 
   if (!isOpen) return null;
+  
+  const blockerOptions: { value: BlockerType, label: string }[] = [
+      { value: 'too_big', label: "It feels too big" },
+      { value: 'unclear', label: "I'm not sure what to do" },
+      { value: 'waiting', label: "I'm waiting on something" },
+      { value: 'dread', label: "I'm avoiding it" },
+  ];
 
   return (
     <div 
@@ -66,7 +80,23 @@ const UnblockerModal: React.FC<UnblockerModalProps> = ({
                 You're blocked on: <span className="font-semibold text-[var(--color-text-primary)]">"{blockedStepText}"</span>
             </p>
             
-            <div className="mt-6 p-4 border bg-[var(--color-surface-sunken)] rounded-lg min-h-[160px] flex items-center justify-center">
+            <div className="my-4">
+                <label className="font-semibold text-sm text-[var(--color-text-secondary)] block mb-2">What's the main reason you're stuck?</label>
+                <div className="flex flex-wrap gap-2">
+                    {blockerOptions.map(opt => (
+                        <button
+                            type="button"
+                            key={opt.value}
+                            onClick={() => setBlockerType(opt.value)}
+                            className={`px-3 py-1.5 text-sm font-semibold rounded-full border-2 transition-colors ${blockerType === opt.value ? 'bg-[var(--color-primary-accent)] text-[var(--color-primary-accent-text)] border-[var(--color-primary-accent)]' : 'bg-transparent text-[var(--color-text-secondary)] border-[var(--color-border)] hover:border-[var(--color-primary-accent)]'}`}
+                        >
+                            {opt.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="p-4 border bg-[var(--color-surface-sunken)] rounded-lg min-h-[160px] flex items-center justify-center">
             {isLoading ? (
                 <div className="text-center text-[var(--color-text-secondary)]">
                     <svg className="animate-spin mx-auto h-8 w-8 text-[var(--color-primary-accent)] mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -87,22 +117,22 @@ const UnblockerModal: React.FC<UnblockerModalProps> = ({
             )}
             </div>
 
-            <div className="mt-6 flex justify-end items-center space-x-2">
-            <button 
-                type="button"
-                onClick={onClose} 
-                className="px-6 py-2 font-semibold text-[var(--color-text-secondary)] bg-transparent hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all"
-            >
-                Ignore
-            </button>
-            <button 
-                type="submit"
-                disabled={isLoading || !editedSuggestion.trim()}
-                className="px-6 py-2 font-bold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md disabled:bg-stone-400 disabled:cursor-not-allowed"
-            >
-                Accept and Add Step
-            </button>
-            </div>
+            <ModalFooter>
+                <Button 
+                    type="button"
+                    onClick={onClose} 
+                    variant="secondary"
+                >
+                    Ignore
+                </Button>
+                <Button 
+                    type="submit"
+                    variant="primary"
+                    disabled={isLoading || !editedSuggestion.trim()}
+                >
+                    Accept and Add Step
+                </Button>
+            </ModalFooter>
         </form>
       </div>
     </div>

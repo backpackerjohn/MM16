@@ -1,4 +1,5 @@
 import React from 'react';
+import { useReducedMotion } from './hooks/useReducedMotion';
 
 const ConfettiPiece: React.FC<{ initialX: number; delay: number; duration: number; color: string }> = ({
   initialX,
@@ -21,8 +22,13 @@ const ConfettiPiece: React.FC<{ initialX: number; delay: number; duration: numbe
 };
 
 const Confetti: React.FC = () => {
+  const reducedMotion = useReducedMotion();
   const numPieces = 100;
   const colors = ['#C75E4A', '#F9A826', '#5A9A78', '#4A90E2', '#D0021B'];
+
+  if (reducedMotion) {
+    return null;
+  }
 
   return (
     <div className="absolute inset-0 z-0 pointer-events-none">

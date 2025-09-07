@@ -1,5 +1,7 @@
 import React, { useEffect } from 'react';
 import ExclamationCircleIcon from './icons/ExclamationCircleIcon';
+import Button from './ui/Button';
+import ModalFooter from './ui/ModalFooter';
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -8,6 +10,7 @@ interface ConfirmationModalProps {
   title: string;
   message: string;
   confirmText?: string;
+  isDestructive?: boolean;
 }
 
 const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
@@ -17,6 +20,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   title,
   message,
   confirmText = 'Confirm',
+  isDestructive = false,
 }) => {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -49,9 +53,11 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-4">
-          <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
-            <ExclamationCircleIcon className="h-6 w-6 text-[var(--color-danger)]" />
-          </div>
+          {isDestructive && (
+            <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+              <ExclamationCircleIcon className="h-6 w-6 text-[var(--color-danger)]" />
+            </div>
+          )}
           <div className="flex-1">
             <h2 id="confirmation-modal-title" className="text-xl font-bold text-[var(--color-text-primary)]">
               {title}
@@ -62,20 +68,14 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
           </div>
         </div>
 
-        <div className="mt-6 flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-4">
-          <button
-            onClick={onClose}
-            className="mt-3 sm:mt-0 w-full sm:w-auto px-6 py-2 font-semibold text-[var(--color-text-secondary)] bg-transparent border border-[var(--color-border)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="w-full sm:w-auto px-6 py-2 font-bold text-[var(--color-danger-text)] bg-[var(--color-danger)] rounded-lg hover:bg-[var(--color-danger-hover)] transition-all shadow-md"
-          >
-            {confirmText}
-          </button>
-        </div>
+        <ModalFooter>
+            <Button onClick={onClose} variant="secondary">
+                Cancel
+            </Button>
+            <Button onClick={onConfirm} variant={isDestructive ? "destructive" : "primary"}>
+                {confirmText}
+            </Button>
+        </ModalFooter>
       </div>
     </div>
   );

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import Button from './ui/Button';
+import ModalFooter from './ui/ModalFooter';
 
 interface SaveMapModalProps {
   isOpen: boolean;
@@ -57,21 +59,14 @@ const SaveMapModal: React.FC<SaveMapModalProps> = ({ isOpen, onClose, onSave }) 
             </div>
             </div>
 
-            <div className="mt-6 flex justify-end items-center space-x-4">
-            <button 
-                type="button"
-                onClick={onClose} 
-                className="px-6 py-2 font-semibold text-[var(--color-text-secondary)] bg-transparent border border-[var(--color-border)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all"
-            >
-                Cancel
-            </button>
-            <button 
-                type="submit"
-                className="px-6 py-2 font-bold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md"
-            >
-                Save Map
-            </button>
-            </div>
+            <ModalFooter>
+                <Button type="button" onClick={onClose} variant="secondary">
+                    Cancel
+                </Button>
+                <Button type="submit" variant="primary">
+                    Save Map
+                </Button>
+            </ModalFooter>
         </form>
       </div>
     </div>

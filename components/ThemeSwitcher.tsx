@@ -34,7 +34,7 @@ const ThemeSwitcher: React.FC<ThemeSwitcherProps> = ({ settings, setSettings, ac
         if (option.value === 'auto') {
             setSettings({ ...settings, mode: 'auto' });
         } else {
-            // FIX: Spread existing settings to preserve all properties when updating state.
+            // Spread existing settings to preserve all properties when updating state.
             setSettings({ ...settings, mode: 'manual', manualTheme: option.value as ThemeName });
         }
         setIsOpen(false);

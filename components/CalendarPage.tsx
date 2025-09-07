@@ -1,6 +1,7 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
-import { ScheduleEvent, SmartReminder, ReminderStatus, ContextTag, SuccessState, DNDWindow, MicroHabit, EnergyTag, UndoAction } from '../types';
+import { EnergyTag } from '../contracts';
+import { ScheduleEvent, SmartReminder, ReminderStatus, ContextTag, SuccessState, DNDWindow, MicroHabit, UndoAction } from '../types';
 import BellIcon from './icons/BellIcon';
 import WandIcon from './icons/WandIcon';
 import LockIcon from './icons/LockIcon';
@@ -21,8 +22,7 @@ import ProgressIndicator from './ProgressIndicator';
 import DropdownMenu from './DropdownMenu';
 import MoreOptionsIcon from './icons/MoreOptionsIcon';
 import TrashIcon from './icons/TrashIcon';
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+import { parseNaturalLanguageReminder } from '../services/geminiService';
 
 // --- CONSTANTS & HELPERS ---
 const DAYS_OF_WEEK: ScheduleEvent['day'][] = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -76,73 +76,6 @@ const doTimesOverlap = (startA: string, endA: string, startB: string, endB: stri
     const startBMin = timeToMinutes(startB);
     const endBMin = timeToMinutes(endB);
     return startAMin < endBMin && endAMin > startBMin;
-};
-
-const parseNaturalLanguageReminder = async (text: string, scheduleEvents: ScheduleEvent[]): Promise<{ anchorTitle: string; offsetMinutes: number; message: string; why: string }> => {
-    const anchorTitles = [...new Set(scheduleEvents.map(e => e.title))];
-
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            anchorTitle: {
-                type: Type.STRING,
-                description: "The title of the anchor event to link this reminder to. Must be an exact match from the provided list.",
-                enum: anchorTitles.length > 0 ? anchorTitles : undefined,
-            },
-            offsetMinutes: {
-                type: Type.NUMBER,
-                description: "The offset in minutes from the anchor's start time. Negative for before, positive for after."
-            },
-            message: {
-                type: Type.STRING,
-                description: "The content of the reminder message for the user."
-            },
-            why: {
-                type: Type.STRING,
-                description: "A brief, friendly explanation for why this reminder is being set at this time."
-            }
-        },
-        required: ["anchorTitle", "offsetMinutes", "message", "why"]
-    };
-
-    const prompt = `
-        You are a helpful scheduling assistant. Parse the user's natural language request to create a structured reminder object.
-        - The 'anchorTitle' MUST be an exact match from the provided list of available anchor titles.
-        - Calculate 'offsetMinutes' based on the request (e.g., "10 minutes before" is -10, "at the start" is 0, "5 minutes after" is 5).
-        - Extract the core reminder 'message'.
-        - Create a simple 'why' message, like "Because you asked to be reminded."
-
-        Available Anchor Titles:
-        ${anchorTitles.join(', ')}
-
-        User Request:
-        "${text}"
-
-        Return a single JSON object that strictly follows the provided schema.
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: schema,
-            },
-        });
-        const jsonStr = response.text.trim();
-        const result = JSON.parse(jsonStr);
-        if (anchorTitles.length > 0 && !anchorTitles.includes(result.anchorTitle)) {
-             throw new Error(`Could not find an anchor named "${result.anchorTitle}". Please check the name.`);
-        }
-        return result;
-    } catch (error) {
-        console.error("Error parsing reminder with Gemini:", error);
-        if (error instanceof Error && error.message.includes('Could not find an anchor')) {
-            throw error;
-        }
-        throw new Error("I had trouble understanding that. Could you try rephrasing? e.g., 'Remind me to pack my gym bag 30 minutes before Gym Session'");
-    }
 };
 
 // --- TYPE DEFINITIONS ---
@@ -577,666 +510,478 @@ const OnboardingFlow: React.FC<{
                      </div>
                     <div className="mt-6 flex justify-center gap-4">
                         <button onClick={() => setStep(2)} className="px-6 py-3 font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] rounded-lg hover:bg-[var(--color-border)]">Edit Details</button>
-                        <button onClick={handleConfirm} className="px-6 py-3 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)]">Confirm & Start</button>
+                        <button onClick={handleConfirm} className="px-6 py-3 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)]">Looks Good, Let's Go!</button>
                     </div>
                 </div>
             );
             default: return null;
         }
-    }
-
-    return (
-        <div 
-            className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4 transition-opacity duration-300"
-            onClick={handleClose}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="onboarding-title"
-        >
-            <div 
-                className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-8 w-full max-w-2xl transform transition-all duration-300 scale-100 text-center relative flex flex-col"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <button onClick={handleClose} className="absolute top-2 right-2 p-2 text-[var(--color-text-subtle)] hover:text-[var(--color-text-primary)] rounded-full hover:bg-[var(--color-surface-sunken)] transition-colors" aria-label="Close setup">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-                {step > 1 && <ProgressIndicator currentStep={step} totalSteps={4} stepLabels={stepLabels} />}
-                <div className="flex-grow">{renderStep()}</div>
-                {step > 1 && step < 4 && (
-                    <div className="mt-4">
-                         <button onClick={handleClose} className="text-sm text-[var(--color-text-subtle)] hover:underline">Skip for now</button>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
-
-// --- DND SETTINGS EDITOR ---
-const DndSettingsEditor: React.FC<{
-    dndWindows: DNDWindow[];
-    setDndWindows: React.Dispatch<React.SetStateAction<DNDWindow[]>>;
-    onSettingChange: (message: string, undoCallback: () => void) => void;
-}> = ({ dndWindows, setDndWindows, onSettingChange }) => {
-
-    const handleDndChange = (day: ScheduleEvent['day'], part: 'startTime' | 'endTime', value: string) => {
-        const originalDnd = [...dndWindows];
-        setDndWindows(prev => {
-            const index = prev.findIndex(w => w.day === day);
-            if (index > -1) {
-                const newWindows = [...prev];
-                newWindows[index] = { ...newWindows[index], [part]: value };
-                return newWindows;
-            }
-            return prev;
-        });
-        onSettingChange('DND times updated.', () => setDndWindows(originalDnd));
-    };
-    
-    const handleApplyToAll = () => {
-        const originalDnd = [...dndWindows];
-        const representativeWindow = dndWindows.find(w => w.day === 'Monday') || dndWindows[0] || { startTime: '23:00', endTime: '07:00' };
-        setDndWindows(DAYS_OF_WEEK.map(day => ({
-            day,
-            startTime: representativeWindow.startTime,
-            endTime: representativeWindow.endTime,
-        })));
-        onSettingChange("Applied Monday's DND to all days.", () => setDndWindows(originalDnd));
     };
     
     return (
-        <div className="space-y-3">
-            {DAYS_OF_WEEK.map(day => {
-                const window = dndWindows.find(w => w.day === day) || { startTime: '', endTime: '' };
-                return (
-                    <div key={day} className="flex items-center justify-between gap-2">
-                        <span className="font-semibold text-[var(--color-text-secondary)] text-sm flex-shrink-0 w-20">{day}</span>
-                        <div className="flex items-center gap-1">
-                            <input type="time" value={window.startTime} onChange={e => handleDndChange(day, 'startTime', e.target.value)} className="p-1 border rounded-md text-sm w-full"/>
-                            <span className="text-[var(--color-text-subtle)]">-</span>
-                            <input type="time" value={window.endTime} onChange={e => handleDndChange(day, 'endTime', e.target.value)} className="p-1 border rounded-md text-sm w-full"/>
-                        </div>
-                    </div>
-                );
-            })}
-             <div className="mt-4 pt-4 border-t">
-                 <button onClick={handleApplyToAll} className="w-full text-sm font-semibold text-[var(--color-primary-accent)] hover:bg-[var(--color-surface-sunken)] p-2 rounded-lg transition-colors">
-                    Apply Monday's time to all days
-                </button>
+        <div className="fixed inset-0 bg-black bg-opacity-70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+            <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-8 w-full max-w-2xl text-center transform transition-all">
+                <ProgressIndicator currentStep={step} totalSteps={4} stepLabels={stepLabels} />
+                {renderStep()}
             </div>
         </div>
     );
 };
 
-// --- SETTINGS PANEL ---
-const SettingsPanel: React.FC<{
-    isOpen: boolean;
-    onClose: () => void;
-    settings: SettingsData;
-    setSettings: React.Dispatch<React.SetStateAction<SettingsData>>;
-    dndWindows: DNDWindow[];
-    setDndWindows: React.Dispatch<React.SetStateAction<DNDWindow[]>>;
-    addChangeToHistory: (message: string, undoCallback: () => void) => void;
-}> = ({ isOpen, onClose, settings, setSettings, dndWindows, setDndWindows, addChangeToHistory }) => {
-    if (!isOpen) return null;
-
-    const handleSettingChange = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
-        const oldSettings = { ...settings };
-        const newSettings = { ...settings, [key]: value };
-        setSettings(newSettings);
-        addChangeToHistory(`Settings updated: ${key}.`, () => setSettings(oldSettings));
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 z-[60] flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-lg transform transition-all h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-                <div className="p-6 border-b">
-                    <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">Smart Reminder Settings</h2>
-                </div>
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    <div className="p-4 border rounded-lg bg-[var(--color-surface-sunken)]/80">
-                        <h3 className="font-bold text-[var(--color-text-primary)] mb-2">Do Not Disturb Windows</h3>
-                        <DndSettingsEditor dndWindows={dndWindows} setDndWindows={setDndWindows} onSettingChange={addChangeToHistory} />
-                    </div>
-                    <div className="p-4 border rounded-lg bg-[var(--color-surface-sunken)]/80 space-y-4">
-                        <h3 className="font-bold text-[var(--color-text-primary)]">AI Behavior</h3>
-                        <div className="flex justify-between items-center">
-                            <label htmlFor="allow-experiments" className="text-sm font-semibold text-[var(--color-text-secondary)]">Allow AI experiments</label>
-                            <input type="checkbox" id="allow-experiments" checked={settings.globalAllowExperiments} onChange={e => handleSettingChange('globalAllowExperiments', e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-[var(--color-primary-accent)] focus:ring-[var(--color-primary-accent)]"/>
-                        </div>
-                        <div className="flex justify-between items-center">
-                            <label htmlFor="max-followups" className="text-sm font-semibold text-[var(--color-text-secondary)]">Max follow-up reminders</label>
-                            <select id="max-followups" value={settings.maxFollowUps} onChange={e => handleSettingChange('maxFollowUps', parseInt(e.target.value) as 0 | 1)} className="p-1 border rounded-md text-sm">
-                                <option value="0">0 (No follow-ups)</option>
-                                <option value="1">1</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div className="p-4 border rounded-lg bg-[var(--color-surface-sunken)]/80 space-y-3 text-sm">
-                        <h3 className="font-bold text-[var(--color-text-primary)]">System Information</h3>
-                        <div className="flex justify-between items-center text-[var(--color-text-secondary)]">
-                           <span>Stacking guardrail:</span>
-                           <span className="font-semibold px-2 py-0.5 bg-green-100 text-green-800 rounded-full text-xs">Always Enabled</span>
-                        </div>
-                         <div className="flex justify-between items-center text-[var(--color-text-secondary)]">
-                           <span>Auto-pause threshold:</span>
-                           <span className="font-semibold">{settings.autoPauseThreshold} consecutive ignores</span>
-                        </div>
-                    </div>
-                </div>
-                <div className="p-4 border-t bg-[var(--color-surface-sunken)]">
-                    <button onClick={onClose} className="w-full px-4 py-2 font-bold text-[var(--color-text-secondary)] bg-[var(--color-border)] hover:bg-[var(--color-border-hover)] rounded-lg">Close</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const CalendarPage: React.FC<CalendarPageProps> = ({ 
-    scheduleEvents, setScheduleEvents, 
-    smartReminders, setSmartReminders, 
-    dndWindows, setDndWindows, 
-    pauseUntil, setPauseUntil,
-    onboardingPreview, setOnboardingPreview,
-    onSuccess,
-    onUndo
-}) => {
-    const [changeHistory, setChangeHistory] = useState<ChangeHistoryItem[]>([]);
-    const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+// --- MAIN COMPONENT ---
+const CalendarPage: React.FC<CalendarPageProps> = (props) => {
+    const { 
+        scheduleEvents, setScheduleEvents, 
+        smartReminders, setSmartReminders, 
+        dndWindows, setDndWindows,
+        pauseUntil, setPauseUntil,
+        onboardingPreview, setOnboardingPreview,
+        onSuccess, onUndo
+    } = props;
+    
+    const [viewMode, setViewMode] = useState<'week' | 'list'>('week');
+    const [isAnchorModalOpen, setIsAnchorModalOpen] = useState(false);
+    const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-    const [infoPanelOpenFor, setInfoPanelOpenFor] = useState<string | null>(null);
-    const [habitStackSuggestion, setHabitStackSuggestion] = useState<{ anchor: ScheduleEvent; reason: string; habit: MicroHabit } | null>(null);
-    const [habitStackError, setHabitStackError] = useState<string | null>(null);
-    const [showAssumptionsCard, setShowAssumptionsCard] = useState(false);
-    const [isAddAnchorModalOpen, setIsAddAnchorModalOpen] = useState(false);
-    const [isAddReminderModalOpen, setIsAddReminderModalOpen] = useState(false);
-    const [settings, setSettings] = useState<SettingsData>({
-        globalAllowExperiments: true,
-        maxFollowUps: 1,
-        autoPauseThreshold: 3,
-        stackingGuardrailEnabled: true,
-    });
-    const [highlightedAnchors, setHighlightedAnchors] = useState<string[]>([]);
-    const [expandedAnchors, setExpandedAnchors] = useState<string[]>([]);
+    const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+    const [selectedDay, setSelectedDay] = useState<ScheduleEvent['day'] | 'All'>('All');
     const [draggedEventId, setDraggedEventId] = useState<string | null>(null);
-    const [dropTargetDay, setDropTargetDay] = useState<ScheduleEvent['day'] | null>(null);
-    const [conflict, setConflict] = useState<ConflictType | null>(null);
 
+    const [changeHistory, setChangeHistory] = useState<ChangeHistoryItem[]>([]);
+    
     useEffect(() => {
-        if (scheduleEvents.length === 0 && !onboardingPreview) {
+        if (scheduleEvents.length === 0 && dndWindows.length === 0 && !onboardingPreview) {
             setIsOnboardingOpen(true);
         }
-    }, [scheduleEvents, onboardingPreview]);
-
-    useEffect(() => {
-        if (scheduleEvents.length > 0 && !localStorage.getItem('hasSeenAssumptionCard')) {
-            const timer = setTimeout(() => {
-                setShowAssumptionsCard(true);
-                const workAnchorIds = scheduleEvents
-                    .filter(e => e.title.toLowerCase().includes('work'))
-                    .map(e => e.id);
-                setHighlightedAnchors(workAnchorIds);
-            }, 5000);
-            return () => clearTimeout(timer);
-        }
-    }, [scheduleEvents]);
-
-    useEffect(() => {
-        if (habitStackSuggestion || habitStackError) return;
-
-        const successfulAnchors = scheduleEvents.filter(anchor => {
-            const associatedReminders = smartReminders.filter(r => r.eventId === anchor.id);
-            if (associatedReminders.length === 0) return false;
-            return associatedReminders.every(r => {
-                const history = r.successHistory || [];
-                if (history.length < 3) return false;
-                const successRate = history.filter(s => s === 'success').length / history.length;
-                return successRate >= 0.75;
-            });
-        });
-
-        const eligibleAnchor = successfulAnchors.find(anchor => {
-            const hasNewStackedHabit = smartReminders.some(r => 
-                r.eventId === anchor.id && r.isStackedHabit && (r.successHistory || []).length < 3
-            );
-            return !hasNewStackedHabit;
-        });
-
-        if (eligibleAnchor) {
-            // FIX: Provide a default EnergyTag context for habit suggestions on calendar anchors.
-            // Using 'Admin' as a neutral context for suggesting transitional habits.
-            const habit = getHabitSuggestion({ completedEnergyTag: EnergyTag.Admin });
-            if (habit) {
-                 setHabitStackSuggestion({
-                    anchor: eligibleAnchor,
-                    reason: `You've built a solid routine around "${eligibleAnchor.title}". This is a great time to stack a new habit!`,
-                    habit: habit
-                });
-            }
-        }
-    }, [smartReminders, scheduleEvents, habitStackSuggestion, habitStackError]);
-
-    const activeReminders = useMemo(() => {
-        if (pauseUntil && new Date() < new Date(pauseUntil)) {
-            return [];
-        }
-
-        let reminders = smartReminders
-            .filter(r => r.status === ReminderStatus.Active || r.status === ReminderStatus.Snoozed || r.status === ReminderStatus.Paused)
-            .map(r => {
-                const event = scheduleEvents.find(e => e.id === r.eventId);
-                if (!event) return null;
-                
-                const now = new Date();
-                const [h, m] = event.startTime.split(':').map(Number);
-                const eventDate = new Date(now);
-                eventDate.setHours(h, m, 0, 0);
-
-                let triggerTime = new Date(eventDate.getTime() + r.offsetMinutes * 60000);
-                if ((r.status === ReminderStatus.Snoozed || r.status === ReminderStatus.Paused) && r.snoozedUntil) {
-                    triggerTime = new Date(r.snoozedUntil);
-                }
-
-                if (triggerTime < now && r.status !== ReminderStatus.Snoozed && r.status !== ReminderStatus.Paused) {
-                    return null;
-                }
-
-                let shiftedReason: string | null = null;
-                const todayDay = DAYS_OF_WEEK[now.getDay() === 0 ? 6 : now.getDay() - 1];
-                const dndWindow = dndWindows.find(d => d.day === todayDay);
-                
-                if (dndWindow && dndWindow.startTime && dndWindow.endTime) {
-                    const [sh, sm] = dndWindow.startTime.split(':').map(Number);
-                    const [eh, em] = dndWindow.endTime.split(':').map(Number);
-                    
-                    if (![sh, sm, eh, em].some(isNaN)) {
-                        let dndStart = new Date(now);
-                        dndStart.setHours(sh, sm, 0, 0);
-                        let dndEnd = new Date(now);
-                        dndEnd.setHours(eh, em, 0, 0);
-
-                        if (dndEnd < dndStart) {
-                            if (now < dndEnd) dndStart.setDate(dndStart.getDate() - 1);
-                            else dndEnd.setDate(dndEnd.getDate() + 1);
-                        }
-                        
-                        if (triggerTime >= dndStart && triggerTime <= dndEnd) {
-                            triggerTime = new Date(dndEnd.getTime());
-                            shiftedReason = "DND-shifted";
-                        }
-                    }
-                }
-                
-                return { ...r, event, triggerTime, shiftedReason };
-            })
-            .filter((r): r is NonNullable<typeof r> => r !== null)
-            .sort((a, b) => a.triggerTime.getTime() - b.triggerTime.getTime());
-
-        return reminders;
-    }, [smartReminders, scheduleEvents, dndWindows, pauseUntil]);
-
+    }, [scheduleEvents, dndWindows, onboardingPreview]);
+    
     const addChangeToHistory = (message: string, undoCallback: () => void) => {
-        const newHistoryEntry: ChangeHistoryItem = { id: Date.now(), message, undo: undoCallback };
-        setChangeHistory(prev => [newHistoryEntry, ...prev].slice(0, 5));
-        onUndo({ message, onUndo: undoCallback });
-    };
-
-    const moveEvent = (eventId: string, targetDay: ScheduleEvent['day'], newStartTime?: string) => {
-        const originalEvents = [...scheduleEvents];
-        const eventToMove = originalEvents.find(e => e.id === eventId);
-        if (!eventToMove) return;
-
-        const startTime = newStartTime || eventToMove.startTime;
-        const duration = timeToMinutes(eventToMove.endTime) - timeToMinutes(eventToMove.startTime);
-        const endTime = minutesToTime(timeToMinutes(startTime) + duration);
-
-        setScheduleEvents(prev => prev.map(e => {
-            if (e.id === eventId) {
-                return { ...e, day: targetDay, startTime, endTime };
-            }
-            return e;
-        }));
-        
-        const timeStr = `${formatTimeForToast(startTime)}–${formatTimeForToast(endTime)}`;
-        addChangeToHistory(`Moved "${eventToMove.title}" to ${targetDay}, ${timeStr}.`, () => setScheduleEvents(originalEvents));
-    };
-
-    const handleDragStart = (e: React.DragEvent<HTMLDivElement>, eventId: string) => {
-        e.dataTransfer.setData('application/json', JSON.stringify({ eventId }));
-        e.dataTransfer.effectAllowed = 'move';
-        setTimeout(() => setDraggedEventId(eventId), 0);
-    };
-
-    const handleDragEnd = () => {
-        setDraggedEventId(null);
-        setDropTargetDay(null);
-    };
-
-    const handleDrop = (e: React.DragEvent<HTMLDivElement>, day: ScheduleEvent['day']) => {
-        e.preventDefault();
-        setDropTargetDay(null);
-        setDraggedEventId(null);
-
-        const { eventId } = JSON.parse(e.dataTransfer.getData('application/json'));
-        const eventToMove = scheduleEvents.find(ev => ev.id === eventId);
-        if (!eventToMove || eventToMove.day === day) return;
-        
-        const dnd = dndWindows.find(w => w.day === day);
-        if (dnd && doTimesOverlap(eventToMove.startTime, eventToMove.endTime, dnd.startTime, dnd.endTime)) {
-            setConflict({ type: 'dnd', eventToMoveId: eventId, targetDay: day });
-            return;
-        }
-        
-        const overlappingEvent = scheduleEvents.find(ev => ev.day === day && ev.id !== eventId && doTimesOverlap(eventToMove.startTime, eventToMove.endTime, ev.startTime, ev.endTime));
-        if (overlappingEvent) {
-            setConflict({ type: 'overlap', eventToMoveId: eventId, targetDay: day, overlappingEventId: overlappingEvent.id });
-            return;
-        }
-        moveEvent(eventId, day);
-    };
-
-    const resolveConflict = (decision: 'shift_dnd' | 'shift_overlap' | 'keep_overlap') => {
-        if (!conflict) return;
-        const { eventToMoveId, targetDay } = conflict;
-
-        if (decision === 'keep_overlap') {
-            moveEvent(eventToMoveId, targetDay);
-        } else if (decision === 'shift_overlap') {
-            const overlappingEvent = scheduleEvents.find(e => e.id === conflict.overlappingEventId);
-            if (overlappingEvent) {
-                const newStartTime = minutesToTime(timeToMinutes(overlappingEvent.endTime));
-                moveEvent(eventToMoveId, targetDay, newStartTime);
-            }
-        } else if (decision === 'shift_dnd') {
-            const dnd = dndWindows.find(w => w.day === targetDay);
-            if (dnd) {
-                const newStartTime = dnd.endTime;
-                moveEvent(eventToMoveId, targetDay, newStartTime);
-            }
-        }
-        setConflict(null);
-    }
-    
-    const handleDuplicateAnchor = (eventId: string) => {
-        const originalEvent = scheduleEvents.find(e => e.id === eventId);
-        if (!originalEvent) return;
-        const newEvent: ScheduleEvent = {
-            ...originalEvent,
-            id: `copy-${originalEvent.id}-${Date.now()}`,
+        const newChange: ChangeHistoryItem = {
+            id: Date.now(),
+            message,
+            undo: undoCallback,
         };
-        const originalEvents = [...scheduleEvents];
-        setScheduleEvents(prev => [...prev, newEvent]);
-        addChangeToHistory(`Duplicated "${originalEvent.title}".`, () => setScheduleEvents(originalEvents));
-    };
-
-    const handleDeleteAnchor = (eventId: string) => {
-        const anchorToDelete = scheduleEvents.find(e => e.id === eventId);
-        if (!anchorToDelete) return;
-    
-        const originalAnchors = [...scheduleEvents];
-        setScheduleEvents(anchors => anchors.filter(a => a.id !== eventId));
+        setChangeHistory(prev => [newChange, ...prev.slice(0, 9)]);
+        onSuccess(message);
         
         onUndo({
-            message: `Deleted anchor "${anchorToDelete.title}"`,
+            message,
             onUndo: () => {
-                setScheduleEvents(originalAnchors);
+                undoCallback();
+                setChangeHistory(prev => prev.filter(c => c.id !== newChange.id));
             }
         });
     };
+    
+    const isPaused = useMemo(() => {
+        if (!pauseUntil) return false;
+        return new Date() < new Date(pauseUntil);
+    }, [pauseUntil]);
 
-    const handleSaveAnchor = (data: { title: string; startTime: string; endTime: string; days: ScheduleEvent['day'][] }) => {
+    const activeReminders = useMemo(() => {
+        if (isPaused) return [];
+        const now = new Date();
+        const currentTimeInMinutes = now.getHours() * 60 + now.getMinutes();
+        const currentDay = DAYS_OF_WEEK[now.getDay() === 0 ? 6 : now.getDay() - 1];
+
+        const anchorMap = new Map(scheduleEvents.map(e => [e.id, e]));
+
+        return smartReminders.filter(reminder => {
+            const anchor = anchorMap.get(reminder.eventId);
+            if (!anchor || anchor.day !== currentDay) return false;
+
+            const anchorStartTime = timeToMinutes(anchor.startTime);
+            const reminderTime = anchorStartTime + reminder.offsetMinutes;
+            
+            // Check DND
+            const isInDnd = dndWindows.some(dnd => {
+                if (dnd.day !== currentDay) return false;
+                const dndStart = timeToMinutes(dnd.startTime);
+                const dndEnd = timeToMinutes(dnd.endTime);
+                if (dndEnd < dndStart) { // overnight
+                    return reminderTime >= dndStart || reminderTime < dndEnd;
+                }
+                return reminderTime >= dndStart && reminderTime < dndEnd;
+            });
+            if (isInDnd) return false;
+            
+            const snoozedUntilTime = reminder.snoozedUntil ? new Date(reminder.snoozedUntil).getTime() : 0;
+            if (now.getTime() < snoozedUntilTime) return false;
+
+            if (reminder.status === ReminderStatus.Done) return false;
+
+            // Show reminders that are due now or within the next 15 minutes, and haven't been shown too recently
+            const isDue = reminderTime <= currentTimeInMinutes && reminderTime > (currentTimeInMinutes - 15);
+            
+            // If the reminder was just snoozed, it won't be due, but we want to keep it visible for a moment
+            const justInteracted = reminder.lastInteraction && (now.getTime() - new Date(reminder.lastInteraction).getTime() < 60000)
+
+            return (isDue && reminder.status === ReminderStatus.Active) || justInteracted;
+        });
+    }, [isPaused, smartReminders, scheduleEvents, dndWindows]);
+    
+    const handleAddAnchor = (data: { title: string; startTime: string; endTime: string; days: ScheduleEvent['day'][] }) => {
+        const originalEvents = [...scheduleEvents];
         const newEvents: ScheduleEvent[] = data.days.map(day => ({
-            id: `manual-${data.title.replace(/\s+/g, '-')}-${day}-${Date.now()}`,
-            day: day,
+            id: `anchor-${Date.now()}-${day}`,
+            day,
             title: data.title,
             startTime: data.startTime,
             endTime: data.endTime,
-            contextTags: [ContextTag.Personal]
+            contextTags: [ContextTag.Personal] 
         }));
         setScheduleEvents(prev => [...prev, ...newEvents]);
-        
+        setIsAnchorModalOpen(false);
         const dayStr = formatDaysForToast(data.days);
-        const message = `Anchor '${data.title}' created for ${dayStr}.`;
-
-        onSuccess(message);
-        setIsAddAnchorModalOpen(false);
+        const timeStr = `${formatTimeForToast(data.startTime)}–${formatTimeForToast(data.endTime)}`;
+        addChangeToHistory(`Anchor added: "${data.title}" on ${dayStr}, ${timeStr}.`, () => setScheduleEvents(originalEvents));
     };
 
-    const handleCreateReminderFromModal = (newReminders: SmartReminder[]) => {
-        setSmartReminders(prev => [...prev, ...newReminders]);
-        const { message, offsetMinutes, eventId } = newReminders[0];
-        const anchor = scheduleEvents.find(e => e.id === eventId);
-        const offsetStr = formatOffsetForToast(offsetMinutes);
-        const historyMessage = `Reminder added: "${message}" ${offsetStr} ${anchor?.title}.`;
+    const handleAddReminder = async (text: string) => {
+        const result = await parseNaturalLanguageReminder(text, scheduleEvents);
         
-        onSuccess(historyMessage);
-        setIsAddReminderModalOpen(false);
-    };
-
-    const handleReminderAction = (id: string, action: 'done' | 'snooze' | 'ignore' | 'later' | 'revert_exploration' | 'pause' | 'toggle_lock', payload?: any) => {
-        const originalReminders = [...smartReminders];
-        const reminderToUpdate = originalReminders.find(r => r.id === id);
-        if (!reminderToUpdate) return;
-        
-        let updatedReminders = smartReminders;
-        let historyMessage = '';
-
-        if (action === 'snooze') {
-            const snoozeMinutes = payload as number;
-            updatedReminders = smartReminders.map(r => r.id === id ? {
-                ...r,
-                status: ReminderStatus.Snoozed,
-                snoozedUntil: new Date(Date.now() + snoozeMinutes * 60000).toISOString(),
-                snoozeHistory: [...(r.snoozeHistory || []), snoozeMinutes],
-                successHistory: [...(r.successHistory || []), 'snoozed'],
-                lastInteraction: new Date().toISOString(),
-            } : r);
-            historyMessage = `Snoozed "${reminderToUpdate.message}" for ${snoozeMinutes}m.`;
-        } else if (action === 'done') {
-            updatedReminders = smartReminders.map(r => r.id === id ? {
-                ...r, status: ReminderStatus.Done, successHistory: [...(r.successHistory || []), 'success'], lastInteraction: new Date().toISOString() 
-            } : r);
-            historyMessage = `Completed "${reminderToUpdate.message}".`;
-            if (reminderToUpdate.isStackedHabit && reminderToUpdate.habitId) {
-                const { newStreak } = recordHabitCompletion(reminderToUpdate.habitId);
-                historyMessage += ` 🔥 Streak: ${newStreak}!`;
+        // FIX: Use if/else block to ensure correct type narrowing for the `Result` type.
+        if (result.ok === true) {
+            const { anchorTitle, offsetMinutes, message, why } = result.data;
+            const targetAnchors = scheduleEvents.filter(e => e.title === anchorTitle);
+            if (targetAnchors.length === 0) {
+                throw new Error(`Couldn't find an anchor named "${anchorTitle}".`);
             }
-        } else if (action === 'pause') {
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            tomorrow.setHours(9, 0, 0, 0);
-            updatedReminders = smartReminders.map(r => r.id === id ? {
-                ...r,
-                status: ReminderStatus.Paused,
-                snoozedUntil: tomorrow.toISOString(),
-            } : r);
-            historyMessage = `Paused "${reminderToUpdate.message}" until tomorrow.`;
-        } else if (action === 'toggle_lock') {
-            const isNowLocked = !reminderToUpdate.isLocked;
-            updatedReminders = smartReminders.map(r => r.id === id ? { ...r, isLocked: isNowLocked, allowExploration: !isNowLocked } : r);
-            historyMessage = `${isNowLocked ? 'Locked' : 'Unlocked'} "${reminderToUpdate.message}".`;
-        } else if (action === 'ignore') {
-            updatedReminders = smartReminders.map(r => r.id === id ? {
-                ...r, status: ReminderStatus.Ignored, successHistory: [...(r.successHistory || []), 'ignored'], lastInteraction: new Date().toISOString() 
-            } : r);
-        } else if (action === 'later') {
-            const now = new Date();
-            let laterTime = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-
-            const todayDay = DAYS_OF_WEEK[now.getDay() === 0 ? 6 : now.getDay() - 1];
-            const dndWindow = dndWindows.find(d => d.day === todayDay);
-            if (dndWindow && dndWindow.startTime) {
-                const [h, m] = dndWindow.startTime.split(':').map(Number);
-                if (!isNaN(h) && !isNaN(m)) {
-                    let dndStart = new Date();
-                    dndStart.setHours(h, m, 0, 0);
-                    if (dndStart < now) dndStart.setDate(dndStart.getDate() + 1);
-                    const dndCap = new Date(dndStart.getTime() - 15 * 60000);
-                    if (laterTime > dndCap) laterTime = dndCap;
-                }
-            }
-            if (laterTime <= now) laterTime = new Date(now.getTime() + 60 * 60 * 1000);
-
-            updatedReminders = smartReminders.map(r => r.id === id ? {
-                ...r,
-                status: ReminderStatus.Snoozed,
-                snoozedUntil: laterTime.toISOString(),
-                successHistory: [...(r.successHistory || []), 'snoozed'],
-                lastInteraction: new Date().toISOString(),
-            } : r);
-            historyMessage = `Rescheduled "${reminderToUpdate.message}" for later.`;
-        } else if (action === 'revert_exploration') {
-            updatedReminders = smartReminders.map(r => {
-                // FIX: This map was returning void[] because the if block didn't return anything.
-                // It now correctly returns a SmartReminder object.
-                if (r.id === id && r.isExploratory && r.originalOffsetMinutes !== undefined) {
-                    const { originalOffsetMinutes, isExploratory, ...rest } = r;
-                    return {
-                        ...rest,
-                        offsetMinutes: originalOffsetMinutes,
-                        isExploratory: false,
-                    };
-                }
-                return r;
-            });
-            historyMessage = `Reverted exploratory time for "${reminderToUpdate.message}".`;
-        }
-        setSmartReminders(updatedReminders);
-        if (historyMessage) {
-            onSuccess(historyMessage);
-            addChangeToHistory(historyMessage, () => setSmartReminders(originalReminders));
-        }
-    };
-    
-    const handleCreateReminderFromNaturalLanguage = async (text: string) => {
-        try {
-            const parsed = await parseNaturalLanguageReminder(text, scheduleEvents);
-            const anchors = scheduleEvents.filter(e => e.title === parsed.anchorTitle);
-            if (anchors.length === 0) {
-                throw new Error(`I couldn't find an anchor named "${parsed.anchorTitle}". Please check the name and try again.`);
-            }
-
-            const newReminders: SmartReminder[] = anchors.map(anchor => ({
-                id: `manual-sr-${anchor.id}-${Date.now()}`,
+            
+            const originalReminders = [...smartReminders];
+            const newReminders: SmartReminder[] = targetAnchors.map(anchor => ({
+                id: `sr-${anchor.id}-${Date.now()}`,
                 eventId: anchor.id,
-                offsetMinutes: parsed.offsetMinutes,
-                message: parsed.message,
-                why: parsed.why,
-                status: ReminderStatus.Active,
+                offsetMinutes,
+                message,
+                why,
                 isLocked: false,
                 isExploratory: false,
+                status: ReminderStatus.Active,
                 snoozeHistory: [],
                 snoozedUntil: null,
                 successHistory: [],
                 allowExploration: true,
             }));
+            setSmartReminders(prev => [...prev, ...newReminders]);
+            setIsReminderModalOpen(false);
             
-            handleCreateReminderFromModal(newReminders);
-        } catch (error) {
-            if (error instanceof Error) {
-                throw error;
-            }
-            throw new Error("An unexpected error occurred while creating the reminder.");
+            const offsetStr = formatOffsetForToast(offsetMinutes);
+            addChangeToHistory(`Reminder set: "${message}" ${offsetStr} "${anchorTitle}".`, () => setSmartReminders(originalReminders));
+        } else {
+            throw new Error(result.error);
         }
+    };
+
+    const handleOnboardingComplete = (data: OnboardingPreviewData) => {
+        setScheduleEvents(prev => [...prev, ...data.newAnchors]);
+        setDndWindows(prev => [...prev, ...data.newDnd]);
+        setIsOnboardingOpen(false);
+        onSuccess("Your weekly map is set up!");
+    };
+
+    const handleDuplicateAnchor = (anchor: ScheduleEvent) => {
+        const newAnchor: ScheduleEvent = {
+            ...anchor,
+            id: `anchor-copy-${Date.now()}`,
+            title: `${anchor.title} (Copy)`
+        };
+        const originalEvents = [...scheduleEvents];
+        setScheduleEvents(prev => [...prev, newAnchor]);
+        addChangeToHistory(`Copied anchor "${anchor.title}".`, () => setScheduleEvents(originalEvents));
+    };
+
+    const handleDeleteAnchor = (anchorId: string) => {
+        const originalEvents = [...scheduleEvents];
+        const originalReminders = [...smartReminders];
+        const anchorToDelete = scheduleEvents.find(a => a.id === anchorId);
+
+        setScheduleEvents(prev => prev.filter(e => e.id !== anchorId));
+        setSmartReminders(prev => prev.filter(r => r.eventId !== anchorId));
+        
+        addChangeToHistory(`Deleted anchor "${anchorToDelete?.title}".`, () => {
+            setScheduleEvents(originalEvents);
+            setSmartReminders(originalReminders);
+        });
+    };
+    
+    const handleDragStart = (e: React.DragEvent<HTMLDivElement>, eventId: string) => {
+        setDraggedEventId(eventId);
+        e.dataTransfer.effectAllowed = 'move';
+    };
+
+    const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    };
+
+    const handleDrop = (e: React.DragEvent<HTMLDivElement>, targetDay: ScheduleEvent['day']) => {
+        e.preventDefault();
+        if (!draggedEventId) return;
+
+        const originalEvents = [...scheduleEvents];
+        const eventToMove = scheduleEvents.find(event => event.id === draggedEventId);
+        
+        if (eventToMove && eventToMove.day !== targetDay) {
+            
+            const conflictingEvent = scheduleEvents.find(event =>
+                event.day === targetDay &&
+                event.id !== draggedEventId &&
+                doTimesOverlap(eventToMove.startTime, eventToMove.endTime, event.startTime, event.endTime)
+            );
+            
+            if(conflictingEvent) {
+                alert(`Cannot move "${eventToMove.title}". It conflicts with "${conflictingEvent.title}" on ${targetDay}.`);
+                return;
+            }
+
+            setScheduleEvents(prev => prev.map(event =>
+                event.id === draggedEventId ? { ...event, day: targetDay } : event
+            ));
+            addChangeToHistory(`Moved "${eventToMove.title}" to ${targetDay}.`, () => setScheduleEvents(originalEvents));
+        }
+
+        setDraggedEventId(null);
+    };
+
+    const renderWeekView = () => (
+      <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        {DAYS_OF_WEEK.map(day => (
+          <div
+            key={day}
+            className="bg-[var(--color-surface)] rounded-lg p-3 space-y-3 border border-transparent transition-colors"
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, day)}
+          >
+            <h3 className="font-bold text-center text-[var(--color-text-primary)]">{day}</h3>
+            <div className="space-y-2 min-h-[100px]">
+              {scheduleEvents.filter(e => e.day === day).sort((a,b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime)).map(event => {
+                const isDragging = draggedEventId === event.id;
+                return (
+                  <div
+                    key={event.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, event.id)}
+                    className={`calendar-anchor p-2 rounded-lg text-xs cursor-grab transition-all ${getAnchorColor(event.title)} ${isDragging ? 'opacity-50 scale-105 shadow-2xl' : 'shadow-sm'}`}
+                  >
+                    <p className="font-bold">{event.title}</p>
+                    <p>{formatTimeForToast(event.startTime)} - {formatTimeForToast(event.endTime)}</p>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+    
+    const renderListView = () => {
+        const filteredEvents = selectedDay === 'All' ? scheduleEvents : scheduleEvents.filter(e => e.day === selectedDay);
+        const filteredReminders = smartReminders.filter(r => {
+            const anchor = scheduleEvents.find(e => e.id === r.eventId);
+            return anchor && (selectedDay === 'All' || anchor.day === selectedDay);
+        });
+
+        // Fix: Explicitly define types for the combined list to help TypeScript with type narrowing.
+        type AnchorItem = ScheduleEvent & { type: 'anchor' };
+        type ReminderItem = SmartReminder & { type: 'reminder', anchorTime?: string, anchorDay?: ScheduleEvent['day'] };
+        type CalendarItem = AnchorItem | ReminderItem;
+
+        const allItems: CalendarItem[] = [
+            ...filteredEvents.map((e): AnchorItem => ({ ...e, type: 'anchor' })),
+            ...filteredReminders.map((r): ReminderItem => {
+                const anchor = scheduleEvents.find(e => e.id === r.eventId);
+                return { ...r, type: 'reminder', anchorTime: anchor?.startTime, anchorDay: anchor?.day };
+            })
+        ].sort((a, b) => {
+            const dayA = a.type === 'anchor' ? a.day : a.anchorDay;
+            const dayB = b.type === 'anchor' ? b.day : b.anchorDay;
+            if (dayA && dayB && dayA !== dayB) return DAYS_OF_WEEK.indexOf(dayA) - DAYS_OF_WEEK.indexOf(dayB);
+
+            const timeA = a.type === 'anchor' ? timeToMinutes(a.startTime) : timeToMinutes(a.anchorTime || '00:00') + a.offsetMinutes;
+            const timeB = b.type === 'anchor' ? timeToMinutes(b.startTime) : timeToMinutes(b.anchorTime || '00:00') + b.offsetMinutes;
+            return timeA - timeB;
+        });
+        
+        // Group by category for a cleaner look
+        const itemsByCategory = allItems.reduce((acc, item) => {
+            const anchor = item.type === 'anchor' ? item : scheduleEvents.find(e => item.type === 'reminder' && e.id === item.eventId);
+            if (!anchor) return acc;
+            const title = anchor.title.toLowerCase();
+            let category: string;
+            if (title.includes('work') || title.includes('school')) category = 'work';
+            else if (title.includes('gym') || title.includes('health') || title.includes('focus')) category = 'wellness';
+            else if (title.includes('social') || title.includes('family')) category = 'social';
+            else category = 'other';
+            
+            if (!acc[category]) acc[category] = [];
+            acc[category].push(item);
+            return acc;
+        }, {} as Record<string, CalendarItem[]>);
+
+        return (
+            <div className="max-w-4xl mx-auto space-y-4">
+                {Object.entries(itemsByCategory).map(([category, items]) => (
+                    <div key={category} className={`calendar-category-box calendar-category-${category}`}>
+                         <h3 className="font-bold text-lg text-[var(--color-text-primary)] capitalize mb-2">{category}</h3>
+                         <div className="space-y-2">
+                            {items.map(item => {
+                                if (item.type === 'anchor') {
+                                    return (
+                                        <div key={item.id} className="bg-[var(--color-surface)] p-3 rounded-lg flex justify-between items-center shadow-sm">
+                                            <div>
+                                                <p className="font-semibold text-[var(--color-text-primary)]">{item.title}</p>
+                                                <p className="text-sm text-[var(--color-text-secondary)]">{item.day} at {formatTimeForToast(item.startTime)} - {formatTimeForToast(item.endTime)}</p>
+                                            </div>
+                                            <DropdownMenu trigger={<button className="p-1.5 rounded-full text-[var(--color-text-subtle)] hover:bg-[var(--color-surface-sunken)]"><MoreOptionsIcon className="h-5 w-5"/></button>}>
+                                                <button onClick={() => handleDuplicateAnchor(item)} className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"><DuplicateIcon className="h-4 w-4" /> Duplicate</button>
+                                                <button onClick={() => handleDeleteAnchor(item.id)} className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-danger)] hover:bg-red-100 rounded-md"><TrashIcon className="h-4 w-4" /> Delete</button>
+                                            </DropdownMenu>
+                                        </div>
+                                    );
+                                } else { // Reminder
+                                    const anchor = scheduleEvents.find(e => e.id === item.eventId);
+                                    if (!anchor) return null;
+                                    return (
+                                        <div key={item.id} className="bg-[var(--color-surface)] p-3 rounded-lg ml-4 border-l-4 border-[var(--color-border-hover)]">
+                                            <p className="font-semibold text-[var(--color-text-primary)]">{item.message}</p>
+                                            <p className="text-sm text-[var(--color-text-secondary)]">
+                                                {formatOffsetForToast(item.offsetMinutes)} "{anchor.title}" on {anchor.day}s
+                                            </p>
+                                        </div>
+                                    );
+                                }
+                            })}
+                         </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
+    const renderActiveReminder = (reminder: SmartReminder) => {
+        const anchor = scheduleEvents.find(e => e.id === reminder.eventId);
+        if (!anchor) return null;
+
+        const handleInteraction = (newState: ReminderStatus, successState?: SuccessState) => {
+            const originalReminders = [...smartReminders];
+            setSmartReminders(prev => prev.map(r => {
+                if (r.id !== reminder.id) return r;
+                
+                const newSuccessHistory = successState ? [...r.successHistory, successState].slice(-10) : r.successHistory;
+
+                if(newState === ReminderStatus.Snoozed) {
+                    const nextSnoozeDuration = Math.min(30, (r.snoozeHistory[0] || 5) * 2);
+                    const snoozedUntil = new Date(Date.now() + nextSnoozeDuration * 60000).toISOString();
+                    return { ...r, status: newState, lastInteraction: new Date().toISOString(), successHistory: newSuccessHistory, snoozedUntil, snoozeHistory: [nextSnoozeDuration, ...r.snoozeHistory] };
+                }
+                
+                return { ...r, status: newState, lastInteraction: new Date().toISOString(), successHistory: newSuccessHistory, snoozedUntil: null };
+            }));
+            
+            if (successState === 'success') {
+                const habit = getHabitSuggestion({ completedEnergyTag: EnergyTag.Admin });
+                if (habit) {
+                    onSuccess(`Great job! Why not try a quick "${habit.name}"?`);
+                    recordHabitCompletion(habit.id);
+                } else {
+                    onSuccess("Reminder completed. Well done!");
+                }
+            } else if (successState === 'snoozed') {
+                onSuccess("Reminder snoozed.");
+            }
+            
+            addChangeToHistory(`Reminder updated.`, () => setSmartReminders(originalReminders));
+        };
+
+        return (
+            <div key={reminder.id} className="relative bg-[var(--color-surface)] p-4 rounded-xl shadow-lg border border-[var(--color-border-hover)] animate-fade-in max-w-sm w-full">
+                <div className="flex items-start gap-3">
+                    <BellIcon className="h-6 w-6 text-[var(--color-primary-accent)] mt-1" />
+                    <div className="flex-1">
+                        <p className="font-bold text-[var(--color-text-primary)]">{reminder.message}</p>
+                        <p className="text-sm text-[var(--color-text-secondary)]">{reminder.why}</p>
+                    </div>
+                    <div className="flex flex-col items-center gap-1">
+                        <button onClick={() => {}} title={reminder.isLocked ? "This reminder timing is locked based on consistent success." : "Lock this reminder to prevent automatic adjustments."} className="p-1 text-[var(--color-text-subtle)] hover:text-[var(--color-primary-accent)]">
+                            {reminder.isLocked ? <LockIcon className="h-4 w-4" /> : <LockOpenIcon className="h-4 w-4" />}
+                        </button>
+                         <button title="This is an experimental reminder time. Your feedback helps the system learn what works best for you!" className="p-1 text-[var(--color-text-subtle)] hover:text-[var(--color-primary-accent)]">
+                            {reminder.isExploratory && <WandIcon className="h-4 w-4 text-blue-500" />}
+                        </button>
+                    </div>
+                </div>
+                <div className="mt-3 flex gap-2 justify-end">
+                    <button onClick={() => handleInteraction(ReminderStatus.Snoozed, 'snoozed')} className="px-3 py-1.5 text-sm font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] hover:bg-[var(--color-border)] rounded-md">Snooze</button>
+                    <button onClick={() => handleInteraction(ReminderStatus.Done, 'success')} className="px-3 py-1.5 text-sm font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] hover:bg-[var(--color-primary-accent-hover)] rounded-md">Done</button>
+                </div>
+            </div>
+        )
     };
 
     return (
         <main className="container mx-auto p-8">
-            <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
+            <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
                 <div>
-                    <h1 className="text-4xl font-bold text-[var(--color-text-primary)]">Weekly Rhythm</h1>
-                    <p className="text-[var(--color-text-secondary)] mt-2 max-w-2xl">Manage your schedule's anchors and smart reminders to build a consistent rhythm.</p>
+                    <div className="section-header-wrapper">
+                        <h1 className="text-3xl font-bold">Calendar & Reminders</h1>
+                    </div>
+                    <p className="text-[var(--color-text-secondary)] mt-2 max-w-2xl">Manage your weekly anchors and the smart reminders attached to them.</p>
                 </div>
                 <div className="flex items-center space-x-2">
-                    <button onClick={() => setIsSettingsOpen(true)} className="flex items-center space-x-2 px-3 py-2 text-sm font-semibold text-[var(--color-text-secondary)] bg-transparent border border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all" title="Open Settings">
-                        <GearIcon className="h-5 w-5" />
-                        <span className="hidden sm:inline">Settings</span>
-                    </button>
-                    <button onClick={() => setIsAddReminderModalOpen(true)} className="flex items-center space-x-2 px-4 py-2 text-sm font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all border border-[var(--color-border)]">
-                        <BellIcon className="h-5 w-5" />
-                        <span>Add Reminder</span>
-                    </button>
-                    <button onClick={() => setIsAddAnchorModalOpen(true)} className="flex items-center space-x-2 px-4 py-2 text-sm font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] hover:bg-[var(--color-primary-accent-hover)] rounded-lg transition-all shadow-sm">
-                        <PlusIcon className="h-5 w-5" />
-                        <span>Add Anchor</span>
-                    </button>
+                    <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 rounded-lg bg-[var(--color-surface-sunken)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]"><GearIcon className="h-5 w-5"/></button>
+                    <button onClick={() => setIsReminderModalOpen(true)} className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] hover:bg-[var(--color-border)] rounded-lg"><BellIcon className="h-5 w-5" /> Add Reminder</button>
+                    <button onClick={() => setIsAnchorModalOpen(true)} className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] hover:bg-[var(--color-primary-accent-hover)] rounded-lg shadow-sm"><PlusIcon className="h-5 w-5" /> Add Anchor</button>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-4 min-h-[60vh]">
-                {DAYS_OF_WEEK.map(day => {
-                    const eventsForDay = scheduleEvents.filter(e => e.day === day).sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
-                    
-                    return (
-                        <div key={day} 
-                            onDragOver={(e) => { e.preventDefault(); setDropTargetDay(day); }}
-                            onDragLeave={() => setDropTargetDay(null)}
-                            onDrop={(e) => handleDrop(e, day)}
-                            className={`p-3 rounded-lg bg-[var(--color-surface-sunken)]/50 border-2 transition-colors ${dropTargetDay === day ? 'border-[var(--color-primary-accent)]' : 'border-transparent'}`}
-                        >
-                            <h2 className="font-bold text-center text-[var(--color-text-primary)] mb-4">{day}</h2>
-                            <div className="space-y-3">
-                                {eventsForDay.map(event => (
-                                    <div key={event.id}
-                                        draggable
-                                        onDragStart={(e) => handleDragStart(e, event.id)}
-                                        onDragEnd={handleDragEnd}
-                                        className={`p-3 rounded-lg cursor-grab transition-all ${getAnchorColor(event.title)} ${draggedEventId === event.id ? 'opacity-30' : 'opacity-100'}`}
-                                    >
-                                        <div className="flex justify-between items-start">
-                                            <p className="font-bold text-sm">{event.title}</p>
-                                            <DropdownMenu trigger={<MoreOptionsIcon className="h-4 w-4 cursor-pointer" />}>
-                                                 <button onClick={() => handleDuplicateAnchor(event.id)} className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md"><DuplicateIcon className="h-4 w-4" /> Duplicate</button>
-                                                 <button onClick={() => handleDeleteAnchor(event.id)} className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md"><TrashIcon className="h-4 w-4" /> Delete</button>
-                                            </DropdownMenu>
-                                        </div>
-                                        <p className="text-xs opacity-90 mt-1">{formatTimeForToast(event.startTime)} - {formatTimeForToast(event.endTime)}</p>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-
-            <OnboardingFlow isOpen={isOnboardingOpen} onClose={() => setIsOnboardingOpen(false)} onComplete={(data) => {
-                setScheduleEvents(data.newAnchors);
-                setDndWindows(data.newDnd);
-                setIsOnboardingOpen(false);
-            }} onboardingPreview={onboardingPreview} setOnboardingPreview={setOnboardingPreview} />
-
-            <SettingsPanel isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} setSettings={setSettings} dndWindows={dndWindows} setDndWindows={setDndWindows} addChangeToHistory={(message, undo) => onUndo({message, onUndo: undo})} />
-            
-            <AddAnchorModal isOpen={isAddAnchorModalOpen} onClose={() => setIsAddAnchorModalOpen(false)} onSave={handleSaveAnchor} />
-
-            <AddReminderModal isOpen={isAddReminderModalOpen} onClose={() => setIsAddReminderModalOpen(false)} onSubmit={handleCreateReminderFromNaturalLanguage} />
-            <AiChat
-                scheduleEvents={scheduleEvents}
-                setScheduleEvents={setScheduleEvents}
-                smartReminders={smartReminders}
-                setSmartReminders={setSmartReminders}
-                pauseUntil={pauseUntil}
-                setPauseUntil={setPauseUntil}
-                addChangeToHistory={(message, undo) => onUndo({ message, onUndo: undo })}
-            />
-            {conflict && (
-                <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
-                    <div className="bg-[var(--color-surface)] rounded-2xl p-8 max-w-md w-full">
-                        <h2 className="text-xl font-bold">Scheduling Conflict</h2>
-                        <p className="mt-2 text-[var(--color-text-secondary)]">
-                            {conflict.type === 'dnd'
-                                ? `This anchor overlaps with your Do Not Disturb time on ${conflict.targetDay}.`
-                                : `This anchor overlaps with another event on ${conflict.targetDay}.`}
-                        </p>
-                        <div className="mt-6 flex flex-col gap-3">
-                            {conflict.type === 'dnd' && <button onClick={() => resolveConflict('shift_dnd')} className="w-full px-4 py-2 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg">Move to after DND</button>}
-                            {conflict.type === 'overlap' && <button onClick={() => resolveConflict('shift_overlap')} className="w-full px-4 py-2 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg">Move to after conflicting event</button>}
-                            <button onClick={() => resolveConflict('keep_overlap')} className="w-full px-4 py-2 font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] rounded-lg">Keep overlap</button>
-                            <button onClick={() => setConflict(null)} className="w-full px-4 py-2 font-semibold text-[var(--color-text-secondary)] bg-transparent rounded-lg">Cancel</button>
-                        </div>
+            <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center space-x-2 p-1 bg-[var(--color-surface-sunken)] rounded-lg">
+                    <button onClick={() => setViewMode('week')} className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${viewMode === 'week' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}>Week</button>
+                    <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${viewMode === 'list' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}>List</button>
+                </div>
+                {viewMode === 'list' && (
+                    <div className="flex items-center gap-2">
+                        {['All', ...DAYS_OF_WEEK].map(day => (
+                            <button key={day} onClick={() => setSelectedDay(day as any)} className={`px-3 py-1 text-sm font-semibold rounded-full transition-colors ${selectedDay === day ? 'bg-[var(--color-primary-accent)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-sunken)]'}`}>
+                                {day}
+                            </button>
+                        ))}
                     </div>
+                )}
+            </div>
+            
+            {viewMode === 'week' ? renderWeekView() : renderListView()}
+
+             <div className="fixed bottom-6 right-6 z-50 space-y-3">
+                {activeReminders.map(renderActiveReminder)}
+             </div>
+             
+             {isPaused && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[var(--color-surface)] p-3 rounded-full shadow-lg flex items-center gap-3 border border-[var(--color-border)]">
+                    <PauseIcon className="h-5 w-5 text-[var(--color-warning)]"/>
+                    <p className="text-sm font-semibold text-[var(--color-text-secondary)]">Reminders are paused</p>
+                    <button onClick={() => setPauseUntil(null)} className="text-sm font-bold text-[var(--color-primary-accent)] hover:underline">Resume</button>
                 </div>
-            )}
+             )}
+            
+            <AddAnchorModal isOpen={isAnchorModalOpen} onClose={() => setIsAnchorModalOpen(false)} onSave={handleAddAnchor} />
+            <AddReminderModal isOpen={isReminderModalOpen} onClose={() => setIsReminderModalOpen(false)} onSubmit={handleAddReminder} />
+
+            <OnboardingFlow 
+                isOpen={isOnboardingOpen} 
+                onClose={() => setIsOnboardingOpen(false)}
+                onComplete={handleOnboardingComplete}
+                onboardingPreview={onboardingPreview}
+                setOnboardingPreview={setOnboardingPreview}
+            />
+
+            <AiChat 
+                scheduleEvents={scheduleEvents} setScheduleEvents={setScheduleEvents}
+                smartReminders={smartReminders} setSmartReminders={setSmartReminders}
+                pauseUntil={pauseUntil} setPauseUntil={setPauseUntil}
+                addChangeToHistory={addChangeToHistory}
+            />
         </main>
     );
 };

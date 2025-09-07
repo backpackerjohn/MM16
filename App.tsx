@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import Navbar from './components/Navbar';
 import BrainDump from './components/BrainDump';
@@ -5,8 +7,8 @@ import BrainDumpModal from './components/BrainDumpModal';
 import MomentumMap from './components/MomentumMap';
 import TaskPage from './components/TaskPage';
 import CalendarPage from './components/CalendarPage';
-import { GoogleGenAI, Type } from "@google/genai";
-import { BrainDumpItem, Note, SavedTask, MomentumMapData, EnergyTag, ScheduleEvent, SmartReminder, ContextTag, ReminderStatus, DNDWindow, TimeLearningSettings, CompletionRecord, ThemeSettings, ThemeName, CustomThemeProperties, Confirmation, UndoAction, Cluster } from './types';
+import { BrainDumpItem, Note, SavedTask, MomentumMapData, EnergyTag } from './contracts';
+import { ScheduleEvent, SmartReminder, ContextTag, ReminderStatus, DNDWindow, TimeLearningSettings, CompletionRecord, ThemeSettings, ThemeName, CustomThemeProperties, Confirmation, UndoAction, Cluster, Result } from './types';
 import { getCompletionHistory, addRecordToHistory } from './utils/timeAnalytics';
 import TimeLearningSettingsPage from './components/TimeLearningSettings';
 import { themes, themePresets } from './utils/styles';
@@ -17,64 +19,16 @@ import SuccessToast from './components/SuccessToast';
 import ConfirmationModal from './components/ConfirmationModal';
 import UndoToast from './components/UndoToast';
 import { auth } from './utils/firebase';
-import { User, onAuthStateChanged } from 'firebase/auth';
+// Use modular imports for firebase/auth to resolve member export errors.
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { hasLocalData, migrateLocalToFirestore } from './utils/migration';
 import { saveDocument, loadAllData } from './utils/dataService';
 import MigrationModal from './components/MigrationModal';
+import MobileTabBar from './components/MobileTabBar';
+import StatsPage from './components/StatsPage';
+import { processBrainDumpText } from './services/geminiService';
+import { DataProvider } from './src/context/DataContext';
 
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-const processWithGemini = async (text: string): Promise<BrainDumpItem[]> => {
-    const schema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                id: { type: Type.STRING, description: 'A unique identifier for the item (e.g., timestamp and index).' },
-                item: { type: Type.STRING, description: 'The original text of the single, distinct thought or task.' },
-                tags: { 
-                    type: Type.ARRAY, 
-                    description: 'An array of relevant tags or categories (e.g., "Work", "Marketing", "Urgent", "Idea").',
-                    items: { type: Type.STRING } 
-                },
-                isUrgent: { type: Type.BOOLEAN, description: 'True if the item contains language indicating urgency (e.g., "by Thursday", "ASAP").' },
-            },
-            required: ['id', 'item', 'tags', 'isUrgent'],
-        },
-    };
-
-    const prompt = `
-      Analyze the following text, which is a "brain dump" of thoughts.
-      Split the text into individual, distinct items.
-      For each item, perform the following actions:
-      1.  **Extract Tags**: Assign a list of relevant tags (e.g., "Work", "Personal", "Ideas", "Marketing Campaign", "Q2 Budget"). Combine high-level categories and specific projects into a single list of tags. If the item is urgent, also include an "Urgent" tag.
-      2.  **Detect Urgency**: Separately determine if the item is time-sensitive based on keywords (e.g., "by EOD", "tomorrow", "needs to be done"). Set isUrgent to true if so.
-      3.  **Generate ID**: Create a unique ID for each item using the current timestamp in milliseconds combined with its index.
-      Return the output as a JSON object that strictly follows this schema.
-
-      Input Text:
-      "${text}"
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: schema,
-            },
-        });
-        const jsonStr = response.text.trim();
-        const result = JSON.parse(jsonStr);
-        return Array.isArray(result) ? result : [];
-
-    } catch (error) {
-        console.error("Error processing with Gemini:", error);
-        throw new Error("Failed to process thoughts. The AI model might be busy. Please try again.");
-    }
-};
 
 const mockBrainDumpItems: BrainDumpItem[] = [
   {
@@ -104,6 +58,7 @@ const mockSavedTasks: SavedTask[] = [
     note: 'Paused this to work on a critical bug fix. Ready to resume with user testing chunk.',
     savedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     mapData: {
+      version: 1,
       finishLine: {
         statement: 'Successfully launch the new "AI Insights" feature to all users',
         acceptanceCriteria: [
@@ -279,10 +234,10 @@ const Dashboard: React.FC = () => {
   return (
     <main className="container mx-auto p-8">
       <div className="text-center mt-10">
-        <h1 className="text-5xl font-extrabold text-[var(--color-text-primary)] mb-4 tracking-tight">
+        <h1 className="text-5xl font-extrabold text-[var(--color-text-primary)] mb-6 tracking-tight gradient-text">
           Welcome to Momentum AI
         </h1>
-        <p className="text-xl text-[var(--color-text-secondary)] max-w-2xl mx-auto">
+        <p className="text-xl text-[var(--color-text-secondary)] max-w-2xl mx-auto mb-6">
           Your journey to peak productivity starts here. This dashboard will help you visualize progress and organize your ideas effortlessly.
         </p>
         <div className="mt-12 p-10 bg-[var(--color-surface)] rounded-2xl shadow-lg border border-[var(--color-border)]">
@@ -299,11 +254,31 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState('Momentum Map');
   const [isBrainDumpModalOpen, setIsBrainDumpModalOpen] = useState(false);
   const [isThemeSettingsModalOpen, setIsThemeSettingsModalOpen] = useState(false);
-  const [processedItems, setProcessedItems] = useState<BrainDumpItem[]>(() => { try { const i = localStorage.getItem('brainDumpItems'); return i ? JSON.parse(i) : mockBrainDumpItems; } catch { return mockBrainDumpItems; } });
-  const [notes, setNotes] = useState<Record<string, Note>>(() => { try { const n = localStorage.getItem('brainDumpNotes'); return n ? JSON.parse(n) : {}; } catch { return {}; } });
-  const [savedTasks, setSavedTasks] = useState<SavedTask[]>(() => { try { const t = localStorage.getItem('savedMomentumMaps'); return t ? JSON.parse(t) : mockSavedTasks; } catch { return mockSavedTasks; }});
-  const [activeMapData, setActiveMapData] = useState<MomentumMapData | null>(() => { try { const m = localStorage.getItem('activeMapData'); return m ? JSON.parse(m) : null; } catch { return null; } });
-  const [clusters, setClusters] = useState<Cluster[]>(() => { try { const c = localStorage.getItem('clustersData'); return c ? JSON.parse(c) : []; } catch { return []; } });
+  
+  const [savedTasks, setSavedTasks] = useState<SavedTask[]>(() => { 
+    try { 
+        const t = localStorage.getItem('savedMomentumMaps'); 
+        const tasks = t ? JSON.parse(t) : mockSavedTasks;
+        // Upgrade data on read for backward compatibility
+        return tasks.map((task: SavedTask) => {
+            if (task.mapData && !task.mapData.version) {
+                return { ...task, mapData: { ...task.mapData, version: 1 } };
+            }
+            return task;
+        });
+    } catch { return mockSavedTasks; }
+  });
+  const [activeMapData, setActiveMapData] = useState<MomentumMapData | null>(() => { 
+    try { 
+        const m = localStorage.getItem('activeMapData'); 
+        const data = m ? JSON.parse(m) : null;
+        // Upgrade data on read for backward compatibility
+        if (data && !data.version) {
+            data.version = 1;
+        }
+        return data;
+    } catch { return null; } 
+  });
   
   const [scheduleEvents, setScheduleEvents] = useState<ScheduleEvent[]>(() => { try { const s = localStorage.getItem('scheduleEvents'); return s ? JSON.parse(s) : mockScheduleEvents; } catch { return mockScheduleEvents; } });
   const [smartReminders, setSmartReminders] = useState<SmartReminder[]>(() => { try { const r = localStorage.getItem('smartReminders'); return r ? JSON.parse(r) : mockSmartReminders; } catch { return mockSmartReminders; } });
@@ -315,9 +290,9 @@ const App: React.FC = () => {
   const [timeLearningSettings, setTimeLearningSettings] = useState<TimeLearningSettings>(() => {
     try {
         const s = localStorage.getItem('timeLearningSettings');
-        return s ? JSON.parse(s) : { isEnabled: true, sensitivity: 0.3 };
+        return s ? JSON.parse(s) : { isEnabled: true, sensitivity: 0.3, density: 'comfortable' };
     } catch {
-        return { isEnabled: true, sensitivity: 0.3 };
+        return { isEnabled: true, sensitivity: 0.3, density: 'comfortable' };
     }
   });
   
@@ -332,20 +307,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [migrationStatus, setMigrationStatus] = useState<'idle' | 'migrating' | 'success' | 'error'>('idle');
   const [isDataLoaded, setIsDataLoaded] = useState(false);
-
-  useEffect(() => { 
-    if (isDataLoaded) {
-      localStorage.setItem('brainDumpItems', JSON.stringify(processedItems)); 
-      if(user) saveDocument(user.uid, 'brainDumpItems', processedItems);
-    }
-  }, [processedItems, user, isDataLoaded]);
-
-  useEffect(() => { 
-    if (isDataLoaded) {
-      localStorage.setItem('brainDumpNotes', JSON.stringify(notes)); 
-      if(user) saveDocument(user.uid, 'brainDumpNotes', notes);
-    }
-  }, [notes, user, isDataLoaded]);
+  const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
 
   useEffect(() => { 
     if (isDataLoaded) {
@@ -364,13 +326,6 @@ const App: React.FC = () => {
       if(user) saveDocument(user.uid, 'activeMapData', activeMapData);
     }
   }, [activeMapData, user, isDataLoaded]);
-
-  useEffect(() => { 
-    if (isDataLoaded) {
-      localStorage.setItem('clustersData', JSON.stringify(clusters)); 
-      if(user) saveDocument(user.uid, 'clustersData', clusters);
-    }
-  }, [clusters, user, isDataLoaded]);
   
   useEffect(() => { 
     if (isDataLoaded) {
@@ -457,11 +412,23 @@ const App: React.FC = () => {
                 const firestoreData = await loadAllData(currentUser.uid);
                 
                 if (Object.keys(firestoreData).length > 0) {
-                    if (firestoreData.brainDumpItems) setProcessedItems(firestoreData.brainDumpItems);
-                    if (firestoreData.brainDumpNotes) setNotes(firestoreData.brainDumpNotes);
-                    if (firestoreData.savedMomentumMaps) setSavedTasks(firestoreData.savedMomentumMaps);
-                    if (firestoreData.activeMapData !== undefined) setActiveMapData(firestoreData.activeMapData);
-                    if (firestoreData.clustersData) setClusters(firestoreData.clustersData);
+                    
+                    if (firestoreData.savedMomentumMaps) {
+                        const tasks = firestoreData.savedMomentumMaps.map((task: SavedTask) => {
+                            if (task.mapData && !task.mapData.version) {
+                                return { ...task, mapData: { ...task.mapData, version: 1 } };
+                            }
+                            return task;
+                        });
+                        setSavedTasks(tasks);
+                    }
+                    if (firestoreData.activeMapData !== undefined) {
+                        const mapData = firestoreData.activeMapData;
+                        if (mapData && !mapData.version) {
+                            mapData.version = 1;
+                        }
+                        setActiveMapData(mapData);
+                    }
                     if (firestoreData.scheduleEvents) setScheduleEvents(firestoreData.scheduleEvents);
                     if (firestoreData.smartReminders) setSmartReminders(firestoreData.smartReminders);
                     if (firestoreData.dndWindows) setDndWindows(firestoreData.dndWindows);
@@ -557,16 +524,18 @@ const App: React.FC = () => {
     setUndoAction(null);
   };
 
-  const handleBrainDumpSubmit = async (text: string) => {
+  const handleBrainDumpSubmit = async (text: string): Promise<Result<BrainDumpItem[]>> => {
     setError(null);
-    try {
-      const newItems = await processWithGemini(text);
-      setProcessedItems(prev => [...prev, ...newItems]);
-      handleNavigate('Brain Dump');
-    } catch (e: any) {
-      setError(e.message);
-      throw e;
+    const result = await processBrainDumpText(text);
+
+    // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+    if (result.ok === false) {
+      setError(result.error);
+      return { ok: false, error: result.error };
     }
+    
+    handleNavigate('Brain Dump');
+    return { ok: true, data: result.data };
   };
   
   const handleNavigate = (page: string) => {
@@ -608,12 +577,6 @@ const App: React.FC = () => {
                 />;
       case 'Brain Dump':
         return <BrainDump 
-                  processedItems={processedItems}
-                  setProcessedItems={setProcessedItems}
-                  notes={notes}
-                  setNotes={setNotes}
-                  clusters={clusters}
-                  setClusters={setClusters}
                   handleProcess={handleBrainDumpSubmit}
                   error={error}
                   setError={setError}
@@ -641,6 +604,8 @@ const App: React.FC = () => {
                   onSuccess={showSuccessToast}
                   onUndo={showUndoToast}
                 />;
+       case 'Stats':
+        return <StatsPage />;
       case 'Settings':
         return <TimeLearningSettingsPage
                   settings={timeLearningSettings}
@@ -655,58 +620,68 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen antialiased">
-      <Navbar 
-        currentPage={currentPage} 
-        onNavigate={handleNavigate} 
-        onBrainDumpClick={() => setIsBrainDumpModalOpen(true)} 
-        onThemeClick={() => setIsThemeSettingsModalOpen(true)}
-        activeTheme={activeTheme}
-      />
-      {renderPage()}
-      <BrainDumpModal 
-        isOpen={isBrainDumpModalOpen}
-        onClose={() => setIsBrainDumpModalOpen(false)}
-        onSubmit={handleBrainDumpSubmit}
-        onSuccess={showSuccessToast}
-      />
-      <ThemeSettingsModal
-        isOpen={isThemeSettingsModalOpen}
-        onClose={() => setIsThemeSettingsModalOpen(false)}
-        settings={themeSettings}
-        setSettings={setThemeSettings}
-        onThemeSelect={setActiveThemeName}
-      />
-      <ThemeSuggestionToast
-        suggestion={themeSuggestion}
-        onAccept={acceptThemeSuggestion}
-        onDismiss={dismissThemeSuggestion}
-        onPreviewStart={startThemePreview}
-        onPreviewEnd={clearThemePreview}
-      />
-      <SuccessToast
-        message={toastMessage}
-        onDismiss={() => setToastMessage(null)}
-      />
-      <ConfirmationModal
-        isOpen={confirmation?.isOpen || false}
-        onClose={handleCancelConfirmation}
-        onConfirm={handleConfirm}
-        title={confirmation?.title || ''}
-        message={confirmation?.message || ''}
-        confirmText={confirmation?.confirmText || 'Confirm'}
-      />
-      <UndoToast
-        action={undoAction}
-        onUndo={handleUndo}
-        onDismiss={() => setUndoAction(null)}
-      />
-      {migrationStatus !== 'idle' && (
-          <MigrationModal 
-              status={migrationStatus} 
-              onClose={() => setMigrationStatus('idle')} 
-          />
-      )}
+    <div className={`app-root preview-${previewMode} density-${timeLearningSettings.density}`}>
+        <div className="app-content">
+            <div className="min-h-screen antialiased">
+                <Navbar 
+                    currentPage={currentPage} 
+                    onNavigate={handleNavigate} 
+                    onBrainDumpClick={() => setIsBrainDumpModalOpen(true)} 
+                    onThemeClick={() => setIsThemeSettingsModalOpen(true)}
+                    activeTheme={activeTheme}
+                    previewMode={previewMode}
+                    setPreviewMode={setPreviewMode}
+                />
+                <DataProvider>
+                    {renderPage()}
+                    <BrainDumpModal 
+                        isOpen={isBrainDumpModalOpen}
+                        onClose={() => setIsBrainDumpModalOpen(false)}
+                        onSubmit={handleBrainDumpSubmit}
+                        onSuccess={showSuccessToast}
+                    />
+                </DataProvider>
+                <ThemeSettingsModal
+                    isOpen={isThemeSettingsModalOpen}
+                    onClose={() => setIsThemeSettingsModalOpen(false)}
+                    settings={themeSettings}
+                    setSettings={setThemeSettings}
+                    onThemeSelect={setActiveThemeName}
+                />
+                <ThemeSuggestionToast
+                    suggestion={themeSuggestion}
+                    onAccept={acceptThemeSuggestion}
+                    onDismiss={dismissThemeSuggestion}
+                    onPreviewStart={startThemePreview}
+                    onPreviewEnd={clearThemePreview}
+                />
+                <SuccessToast
+                    message={toastMessage}
+                    onDismiss={() => setToastMessage(null)}
+                />
+                <ConfirmationModal
+                    isOpen={confirmation?.isOpen || false}
+                    onClose={handleCancelConfirmation}
+                    onConfirm={handleConfirm}
+                    title={confirmation?.title || ''}
+                    message={confirmation?.message || ''}
+                    confirmText={confirmation?.confirmText || 'Confirm'}
+                    isDestructive={confirmation?.title.toLowerCase().includes('delete') || confirmation?.title.toLowerCase().includes('reset')}
+                />
+                <UndoToast
+                    action={undoAction}
+                    onUndo={handleUndo}
+                    onDismiss={() => setUndoAction(null)}
+                />
+                {migrationStatus !== 'idle' && (
+                    <MigrationModal 
+                        status={migrationStatus} 
+                        onClose={() => setMigrationStatus('idle')} 
+                    />
+                )}
+            </div>
+            <MobileTabBar currentPage={currentPage} onNavigate={handleNavigate} />
+        </div>
     </div>
   );
 };

@@ -1,15 +1,14 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
 import { ScheduleEvent, SmartReminder, ReminderStatus, ContextTag } from '../types';
 import WandIcon from './icons/WandIcon';
 import XIcon from './icons/XIcon';
 import SendIcon from './icons/SendIcon';
 import PlusIcon from './icons/PlusIcon';
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+import { processAiChatMessage } from '../services/geminiService';
 
 // --- TYPE DEFINITIONS ---
-type Message = {
+export type Message = {
     id: number;
     role: 'user' | 'assistant';
     text: string;
@@ -61,42 +60,6 @@ const formatOffsetForToast = (offsetMinutes: number) => {
     const minutes = Math.abs(offsetMinutes);
     return `${minutes} min ${offsetMinutes < 0 ? "before" : "after"}`;
 };
-
-// --- GEMINI CONFIGURATION ---
-const aiSchema = {
-    type: Type.OBJECT,
-    properties: {
-        thought: { type: Type.STRING, description: "Your reasoning for the response." },
-        response_type: { type: Type.STRING, enum: ["CLARIFICATION", "ACTION_CONFIRMATION", "GENERAL_RESPONSE"] },
-        message: { type: Type.STRING, description: "The message to show to the user." },
-        clarification_options: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: "A list of short, button-friendly options for the user to select from to resolve ambiguity."
-        },
-        action: {
-            type: Type.OBJECT,
-            properties: {
-                name: { type: Type.STRING, enum: ["ADD_ANCHOR", "ADD_REMINDER", "PAUSE_NOTIFICATIONS"] },
-                parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                        title: { type: Type.STRING },
-                        startTime: { type: Type.STRING },
-                        endTime: { type: Type.STRING },
-                        days: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        reminderMessage: { type: Type.STRING },
-                        offsetMinutes: { type: Type.NUMBER },
-                        anchorTitle: { type: Type.STRING },
-                        durationDays: { type: Type.NUMBER }
-                    }
-                }
-            }
-        }
-    },
-    required: ["thought", "response_type", "message"]
-};
-
 
 // --- COMPONENT ---
 const AiChat: React.FC<AiChatProps> = (props) => {
@@ -171,69 +134,40 @@ const AiChat: React.FC<AiChatProps> = (props) => {
     
     const sendMessage = async (currentMessages: Message[]) => {
         setIsLoading(true);
+        const result = await processAiChatMessage(currentMessages, props.scheduleEvents);
+        setIsLoading(false);
 
-        const history = currentMessages.map(m => `${m.role}: ${m.text}`).join('\n');
-        const anchors = [...new Set(props.scheduleEvents.map(a => a.title))];
-
-        const prompt = `You are a friendly and supportive executive function assistant. Your tone is always encouraging and never scolding. Use simple, plain language. Your goal is to help the user manage their schedule by creating 'anchors' (like appointments) and 'reminders', or pausing notifications. You must respond with a JSON object matching the provided schema.
-
-- **Be Transparent**: When you make an assumption (e.g., 'Friday' means this coming Friday, '7' means 7 PM), you MUST state it clearly in your confirmation message. For example: "Got it. I've scheduled that for this coming Friday at 7 PM. You can tap to change it if that's not right."
-- **Handle Ambiguity Gracefully**: If a request is unclear (e.g., missing AM/PM, multiple anchors with the same name like 'Meeting'), ask for clarification.
-    - Set 'response_type' to 'CLARIFICATION'.
-    - Ask a simple question in the 'message' field.
-    - Provide short, clear options in 'clarification_options' (e.g., ["In the morning", "In the afternoon"], ["The 9 AM meeting", "The 2 PM meeting"]).
-- **Confirm Actions Clearly**: If you are confident, perform the action and confirm it.
-    - Set 'response_type' to 'ACTION_CONFIRMATION'.
-    - Write a friendly confirmation in 'message' that recaps what you did and any assumptions you made.
-    - Fill out the 'action' object with all the details.
-- **Handle General Chat**: For greetings or chat that isn't a command, use 'GENERAL_RESPONSE' and keep it brief and positive.
-- **Rule for Reminders**: The 'anchorTitle' parameter must EXACTLY match one of the available anchor titles. If the user is vague, you must ask for clarification by providing the matching anchor titles as options.
-
-Current Date: ${new Date().toISOString()}
-Available Anchors: ${anchors.length > 0 ? anchors.join(', ') : 'No anchors have been set up yet.'}
-
-Conversation History (for context):
-${history}
-`;
-
-        try {
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: prompt,
-                config: { responseMimeType: "application/json", responseSchema: aiSchema }
-            });
-
-            const result = JSON.parse(response.text.trim());
-            let card: CardData | undefined;
-
-            if (result.response_type === "ACTION_CONFIRMATION" && result.action) {
-                card = processAction(result.action);
-            }
-
-            const newAssistantMessage: Message = {
-                id: Date.now() + 1,
-                role: 'assistant',
-                text: result.message,
-                card,
-                isClarification: result.response_type === "CLARIFICATION",
-                options: result.clarification_options || []
-            };
-
-            setMessages(prev => [...prev, newAssistantMessage]);
-
-            if(result.response_type === "CLARIFICATION" && !isOpen) {
-                setHasUnread(true);
-            }
-        } catch (error) {
-            console.error("AI Chat Error:", error);
+        // FIX: Use if/else block to ensure correct type narrowing for the `Result` type.
+        if (result.ok === false) {
+            console.error("AI Chat Error:", result.error);
             const errorMessage: Message = {
                 id: Date.now() + 1,
                 role: 'assistant',
                 text: "Sorry, I had trouble understanding that. Could you try rephrasing?"
             };
             setMessages(prev => [...prev, errorMessage]);
-        } finally {
-            setIsLoading(false);
+        } else {
+            const aiResult = result.data;
+            let card: CardData | undefined;
+
+            if (aiResult.response_type === "ACTION_CONFIRMATION" && aiResult.action) {
+                card = processAction(aiResult.action);
+            }
+
+            const newAssistantMessage: Message = {
+                id: Date.now() + 1,
+                role: 'assistant',
+                text: aiResult.message,
+                card,
+                isClarification: aiResult.response_type === "CLARIFICATION",
+                options: aiResult.clarification_options || []
+            };
+
+            setMessages(prev => [...prev, newAssistantMessage]);
+
+            if (aiResult.response_type === "CLARIFICATION" && !isOpen) {
+                setHasUnread(true);
+            }
         }
     };
     
@@ -358,5 +292,4 @@ ${history}
         </div>
     );
 };
-
 export default AiChat;

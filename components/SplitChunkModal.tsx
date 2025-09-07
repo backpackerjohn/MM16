@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Chunk, SubStep } from '../types';
+import { Chunk, SubStep } from '../contracts';
+import Button from './ui/Button';
+import ModalFooter from './ui/ModalFooter';
 
 interface SplitChunkModalProps {
   isOpen: boolean;
@@ -124,12 +126,12 @@ const SplitChunkModal: React.FC<SplitChunkModalProps> = ({
                     <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">How do you want to split this chunk?</h3>
                     <p className="text-[var(--color-text-secondary)] mt-2 mb-6 max-w-md">Break this large task into smaller, focused chunks of about 25 minutes each.</p>
                     <div className="flex gap-4">
-                        <button type="button" onClick={handleAddNewChunk} className="px-5 py-2.5 font-bold text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] hover:bg-[var(--color-border)] rounded-lg transition-all">
+                        <Button type="button" onClick={handleAddNewChunk} variant="secondary">
                             Add Manually
-                        </button>
-                        <button type="button" onClick={handleGenerate} className="px-5 py-2.5 font-semibold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md">
+                        </Button>
+                        <Button type="button" onClick={handleGenerate} variant="primary">
                             Suggest with AI
-                        </button>
+                        </Button>
                     </div>
                 </div>
             )}
@@ -169,14 +171,14 @@ const SplitChunkModal: React.FC<SplitChunkModalProps> = ({
 
             </div>
 
-            <div className="mt-6 pt-4 border-t border-[var(--color-border)] flex justify-end items-center space-x-4">
-            <button type="button" onClick={onClose} className="px-6 py-3 font-semibold text-[var(--color-text-secondary)] bg-transparent border border-[var(--color-border)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all">
-                Cancel
-            </button>
-            <button type="submit" disabled={newChunks.length === 0 || isLoading} className="px-6 py-3 font-bold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md disabled:bg-stone-400 disabled:cursor-not-allowed">
-                Save Split
-            </button>
-            </div>
+            <ModalFooter>
+                <Button type="button" onClick={onClose} variant="secondary">
+                    Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={newChunks.length === 0 || isLoading}>
+                    Save Split
+                </Button>
+            </ModalFooter>
         </form>
       </div>
     </div>

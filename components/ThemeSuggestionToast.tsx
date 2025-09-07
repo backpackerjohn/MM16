@@ -27,7 +27,7 @@ const ThemeSuggestionToast: React.FC<ThemeSuggestionToastProps> = ({ suggestion,
     }
 
     const suggestedThemeProperties = themes[suggestion];
-    // FIX: Cast style object to React.CSSProperties to allow custom CSS variables.
+    // Cast style object to React.CSSProperties to allow custom CSS variables.
     const toastStyle = {
         '--toast-surface': `hsl(${suggestedThemeProperties['--color-surface-h']}, ${suggestedThemeProperties['--color-surface-s']}, ${suggestedThemeProperties['--color-surface-l']})`,
         '--toast-border': `hsl(${suggestedThemeProperties['--color-border-h']}, ${suggestedThemeProperties['--color-border-s']}, ${suggestedThemeProperties['--color-border-l']})`,

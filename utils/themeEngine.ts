@@ -1,4 +1,5 @@
-import { ThemeName, Chunk, ScheduleEvent, EnergyTag, ContextTag, DNDWindow } from '../types';
+import { Chunk, EnergyTag } from '../contracts';
+import { ThemeName, ScheduleEvent, ContextTag, DNDWindow } from '../types';
 
 interface ThemeContext {
     activeChunk: Chunk | null;

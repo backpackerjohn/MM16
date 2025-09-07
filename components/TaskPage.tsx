@@ -1,6 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { SavedTask, SubStep, UndoAction } from '../types';
+import { SavedTask, SubStep } from '../contracts';
+import { UndoAction } from '../types';
 import TrashIcon from './icons/TrashIcon';
+import DropdownMenu from './DropdownMenu';
+import CheckIcon from './icons/CheckIcon';
+import InlineConfetti from './InlineConfetti';
 
 interface TaskPageProps {
   savedTasks: SavedTask[];
@@ -13,6 +17,8 @@ const TaskPage: React.FC<TaskPageProps> = ({ savedTasks, setSavedTasks, onResume
   type SortOption = 'Most Recent' | 'Finish Line' | 'Unfinished Only';
   const [sortBy, setSortBy] = useState<SortOption>('Most Recent');
   const [editingTask, setEditingTask] = useState<{ id: string; note: string; nickname: string } | null>(null);
+
+  const sortOptions: SortOption[] = ['Most Recent', 'Finish Line', 'Unfinished Only'];
 
   const sortedTasks = useMemo(() => {
     let tasks = [...savedTasks];
@@ -75,9 +81,11 @@ const TaskPage: React.FC<TaskPageProps> = ({ savedTasks, setSavedTasks, onResume
     const isEditing = editingTask?.id === task.id;
     const nextBestMove = findNextBestMove(task);
     const progressPercentage = task.progress.totalSubSteps > 0 ? (task.progress.completedSubSteps / task.progress.totalSubSteps) * 100 : 0;
-    
+    const isComplete = progressPercentage === 100;
+
     return (
-      <div key={task.id} className="bg-[var(--color-surface)] p-6 rounded-xl shadow-sm border border-[var(--color-border)] flex flex-col transition-all duration-300 hover:shadow-md hover:border-[var(--color-border-hover)]">
+      <div key={task.id} className={`interactive-card bg-[var(--color-surface)] p-6 rounded-xl flex flex-col transition-all duration-300 ${isComplete ? 'relative overflow-hidden' : ''}`}>
+        {isComplete && <InlineConfetti />}
         {isEditing ? (
             <div className="flex-1">
                 <input
@@ -110,7 +118,7 @@ const TaskPage: React.FC<TaskPageProps> = ({ savedTasks, setSavedTasks, onResume
                 
                 <div className="mt-4">
                     <div className="w-full bg-[var(--color-surface-sunken)] rounded-full h-2">
-                        <div className="bg-[var(--color-success)] h-2 rounded-full" style={{ width: `${progressPercentage}%` }}></div>
+                        <div className="progress-bar-fill bg-[var(--color-success)] h-2 rounded-full" style={{ width: `${progressPercentage}%` }}></div>
                     </div>
                     <p className="text-xs text-[var(--color-text-subtle)] mt-1.5 font-medium">
                         <strong>{task.progress.completedChunks}</strong> of <strong>{task.progress.totalChunks}</strong> chunks &middot; <strong>{task.progress.completedSubSteps}</strong> of <strong>{task.progress.totalSubSteps}</strong> steps
@@ -129,7 +137,7 @@ const TaskPage: React.FC<TaskPageProps> = ({ savedTasks, setSavedTasks, onResume
             </div>
         )}
         
-        <div className="mt-4 pt-4 border-t border-[var(--color-border)]/80 flex items-center gap-2">
+        <div className="mt-4 pt-4 border-t inset-divider flex items-center gap-2">
             {isEditing ? (
                 <>
                     <button onClick={() => setEditingTask(null)} className="px-4 py-2 text-sm font-bold text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] hover:bg-[var(--color-border)] rounded-lg transition-all">Cancel</button>
@@ -151,23 +159,36 @@ const TaskPage: React.FC<TaskPageProps> = ({ savedTasks, setSavedTasks, onResume
 
   return (
     <main className="container mx-auto p-8">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-start mb-6">
         <div>
-          <h1 className="text-4xl font-bold text-[var(--color-text-primary)]">Saved Momentum Maps</h1>
-          <p className="text-[var(--color-text-secondary)] mt-2 max-w-2xl">Resume a saved map, or review your progress.</p>
+            <div className="section-header-wrapper jade-mint">
+                <h1 className="text-3xl font-bold">Saved Momentum Maps</h1>
+            </div>
+            <p className="text-[var(--color-text-secondary)] mt-2 max-w-2xl">Resume a saved map, or review your progress.</p>
         </div>
         <div className="flex items-center space-x-2">
-          <label htmlFor="sort-tasks" className="text-sm font-semibold text-[var(--color-text-secondary)]">Sort by:</label>
-          <select
-            id="sort-tasks"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortOption)}
-            className="p-2 border border-[var(--color-border)] rounded-lg text-sm font-semibold focus:ring-2 focus:ring-[var(--color-primary-accent)] transition-shadow bg-transparent"
-          >
-            <option>Most Recent</option>
-            <option>Finish Line</option>
-            <option>Unfinished Only</option>
-          </select>
+            <span className="text-sm font-semibold text-[var(--color-text-secondary)]">Sort by:</span>
+            <DropdownMenu
+                trigger={
+                    <button className="flex items-center gap-2 p-2 border border-[var(--color-border)] rounded-lg text-sm font-semibold hover:bg-[var(--color-surface-sunken)] transition-colors">
+                        <span>{sortBy}</span>
+                        <svg className="h-4 w-4 text-[var(--color-text-subtle)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                    </button>
+                }
+            >
+                {sortOptions.map(option => (
+                    <button
+                        key={option}
+                        onClick={() => setSortBy(option)}
+                        className="w-full text-left flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)] rounded-md font-medium"
+                    >
+                        <div className="w-5">
+                            {sortBy === option && <CheckIcon className="h-5 w-5 text-[var(--color-primary-accent)]" />}
+                        </div>
+                        <span>{option}</span>
+                    </button>
+                ))}
+            </DropdownMenu>
         </div>
       </div>
       

@@ -2,6 +2,8 @@ import React from 'react';
 import PlusIcon from './icons/PlusIcon';
 import AppLogoIcon from './icons/AppLogoIcon';
 import WandIcon from './icons/WandIcon';
+import DesktopIcon from './icons/DesktopIcon';
+import MobileIcon from './icons/MobileIcon';
 
 interface NavbarProps {
   currentPage: string;
@@ -9,16 +11,18 @@ interface NavbarProps {
   onBrainDumpClick: () => void;
   onThemeClick: () => void;
   activeTheme: string;
+  previewMode: 'desktop' | 'mobile';
+  setPreviewMode: (mode: 'desktop' | 'mobile') => void;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate, onBrainDumpClick, onThemeClick, activeTheme }) => {
+const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate, onBrainDumpClick, onThemeClick, activeTheme, previewMode, setPreviewMode }) => {
   const navLinks = [
     'Dashboard',
     'Momentum Map',
     'Brain Dump',
     'Task',
     'Calendar',
-    'Stats',
+    'My Stats',
     'Settings',
   ];
 
@@ -40,7 +44,7 @@ const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate, onBrainDumpCli
               key={link}
               onClick={() => onNavigate(link)}
               className={`transition-colors duration-300 font-semibold text-sm ${
-                currentPage === link
+                currentPage === link || (currentPage === 'Stats' && link === 'My Stats')
                   ? 'text-[var(--color-primary-accent)]'
                   : 'text-[var(--color-text-subtle)] hover:text-[var(--color-primary-accent)]'
               }`}
@@ -52,6 +56,22 @@ const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate, onBrainDumpCli
 
         {/* Right Section: Action Buttons */}
         <div className="flex items-center space-x-3">
+           <div className="flex items-center space-x-1 p-1 bg-[var(--color-surface-sunken)] rounded-full border border-[var(--color-border)]">
+              <button 
+                onClick={() => setPreviewMode('desktop')} 
+                className={`p-1.5 rounded-full transition-colors ${previewMode === 'desktop' ? 'bg-[var(--color-primary-accent)] text-white' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]'}`}
+                title="Desktop View"
+              >
+                  <DesktopIcon className="h-4 w-4" />
+              </button>
+              <button 
+                onClick={() => setPreviewMode('mobile')} 
+                className={`p-1.5 rounded-full transition-colors ${previewMode === 'mobile' ? 'bg-[var(--color-primary-accent)] text-white' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]'}`}
+                title="Mobile Preview"
+              >
+                  <MobileIcon className="h-4 w-4" />
+              </button>
+          </div>
           <button
             onClick={onThemeClick}
             className="flex items-center space-x-2 px-3 py-2 text-sm font-semibold text-[var(--color-text-secondary)] bg-transparent border border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-surface-sunken)] rounded-[var(--border-radius-md)] transition-all"

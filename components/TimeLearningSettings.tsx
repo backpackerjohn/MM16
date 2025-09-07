@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
-import { TimeLearningSettings, CompletionRecord, EnergyTag, Confirmation } from '../types';
+import { TimeLearningSettings, CompletionRecord, Confirmation } from '../types';
+import { EnergyTag } from '../contracts';
 import { resetCompletionHistory, analyzeTimeOfDayPerformance, analyzeDayOfWeekPerformance } from '../utils/timeAnalytics';
+import Button from './ui/Button';
 
 const AccuracyChart: React.FC<{ data: { label: string; avgDeviation: number }[] }> = ({ data }) => {
     if (data.length < 2) return null;
@@ -150,6 +152,24 @@ const TimeLearningSettingsPage: React.FC<Props> = ({ settings, setSettings, comp
             <p className="text-[var(--color-text-secondary)] mb-8">Manage how Momentum Map learns from your work patterns to personalize your time estimates.</p>
             
             <div className="space-y-6">
+                 <div className="bg-[var(--color-surface)] p-6 rounded-2xl shadow-sm border">
+                    <h2 className="text-2xl font-bold text-[var(--color-text-primary)] mb-4">Display Density</h2>
+                    <div className="flex items-center space-x-2 p-1 bg-[var(--color-surface-sunken)] rounded-lg">
+                        <button
+                            onClick={() => setSettings(s => ({ ...s, density: 'comfortable' }))}
+                            className={`flex-1 px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${settings.density === 'comfortable' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}
+                        >
+                            Comfortable
+                        </button>
+                        <button
+                            onClick={() => setSettings(s => ({ ...s, density: 'compact' }))}
+                            className={`flex-1 px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${settings.density === 'compact' ? 'bg-[var(--color-surface)] shadow-sm text-[var(--color-primary-accent)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'}`}
+                        >
+                            Compact
+                        </button>
+                    </div>
+                </div>
+
                 <div className="bg-[var(--color-surface)] p-6 rounded-2xl shadow-sm border">
                     <h2 className="text-2xl font-bold text-[var(--color-text-primary)] mb-4">General</h2>
                     <div className="flex justify-between items-center">
@@ -164,7 +184,7 @@ const TimeLearningSettingsPage: React.FC<Props> = ({ settings, setSettings, comp
                         <div>
                             <label htmlFor="sensitivity" className="font-semibold text-[var(--color-text-secondary)]">Learning Sensitivity</label>
                             <p className="text-sm text-[var(--color-text-subtle)] mb-2">How much weight to give your most recent tasks. Higher is more reactive.</p>
-                            <input type="range" id="sensitivity" min="0.1" max="0.9" step="0.1" value={settings.sensitivity} onChange={e => setSettings(s => ({ ...s, sensitivity: parseFloat(e.target.value) }))} disabled={!settings.isEnabled} className="w-full" />
+                            <input type="range" id="sensitivity" min="0.1" max="0.9" step="0.1" value={settings.sensitivity} onChange={e => setSettings(s => ({ ...s, sensitivity: parseFloat(e.target.value) }))} disabled={!settings.isEnabled} className="w-full settings-slider" />
                         </div>
                     </div>
                 </div>
@@ -234,8 +254,12 @@ const TimeLearningSettingsPage: React.FC<Props> = ({ settings, setSettings, comp
                 <div className="bg-[var(--color-surface)] p-6 rounded-2xl shadow-sm border">
                     <h2 className="text-2xl font-bold text-[var(--color-text-primary)] mb-4">Data Management</h2>
                     <div className="flex justify-between items-center gap-4">
-                        <button onClick={handleExport} className="flex-1 px-4 py-2 font-semibold text-[var(--color-text-secondary)] bg-[var(--color-surface-sunken)] hover:bg-[var(--color-border)] rounded-lg">Export My Data</button>
-                        <button onClick={handleReset} className="flex-1 px-4 py-2 font-semibold text-[var(--color-danger-text)] bg-[var(--color-danger)] hover:bg-[var(--color-danger-hover)] rounded-lg">Reset Learning Data</button>
+                        <Button onClick={handleReset} variant="destructive-secondary">
+                            Reset Learning Data
+                        </Button>
+                        <Button onClick={handleExport} variant="secondary">
+                            Export My Data
+                        </Button>
                     </div>
                 </div>
             </div>

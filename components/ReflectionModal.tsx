@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Chunk, Reflection } from '../types';
+import { Chunk, Reflection } from '../contracts';
+import Button from './ui/Button';
+import ModalFooter from './ui/ModalFooter';
 
 interface ReflectionModalProps {
   isOpen: boolean;
@@ -78,20 +80,14 @@ const ReflectionModal: React.FC<ReflectionModalProps> = ({ isOpen, onClose, onSa
             </div>
         </div>
 
-        <div className="mt-6 flex justify-end items-center space-x-4">
-          <button 
-            onClick={onClose} 
-            className="px-6 py-2 font-semibold text-[var(--color-text-secondary)] bg-transparent border border-[var(--color-border)] hover:bg-[var(--color-surface-sunken)] rounded-lg transition-all"
-          >
+        <ModalFooter>
+          <Button onClick={onClose} variant="secondary">
             Skip for now
-          </button>
-          <button 
-            onClick={handleSubmit} 
-            className="px-6 py-2 font-bold text-[var(--color-primary-accent-text)] bg-[var(--color-primary-accent)] rounded-lg hover:bg-[var(--color-primary-accent-hover)] transition-all shadow-md"
-          >
+          </Button>
+          <Button onClick={handleSubmit} variant="primary">
             Save Reflection
-          </button>
-        </div>
+          </Button>
+        </ModalFooter>
       </div>
     </div>
   );
