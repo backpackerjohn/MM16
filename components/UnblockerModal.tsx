@@ -9,7 +9,7 @@ type BlockerType = Extract<GamEvent, { type: 'blocker_logged' }>['blocker'];
 interface UnblockerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAccept: (suggestionText: string, blockerType: BlockerType) => void;
+  onAccept: (suggestionText: string) => void;
   suggestion: string;
   isLoading: boolean;
   blockedStepText: string;
@@ -47,7 +47,7 @@ const UnblockerModal: React.FC<UnblockerModalProps> = ({
   }, [isOpen, onClose]);
 
   const handleAccept = () => {
-    onAccept(editedSuggestion, blockerType);
+    onAccept(editedSuggestion);
     onClose();
   };
 

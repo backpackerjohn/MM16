@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ScheduleEvent, SmartReminder, ReminderStatus, ContextTag } from '../types';
 import WandIcon from './icons/WandIcon';
@@ -137,16 +138,8 @@ const AiChat: React.FC<AiChatProps> = (props) => {
         const result = await processAiChatMessage(currentMessages, props.scheduleEvents);
         setIsLoading(false);
 
-        // FIX: Use if/else block to ensure correct type narrowing for the `Result` type.
-        if (result.ok === false) {
-            console.error("AI Chat Error:", result.error);
-            const errorMessage: Message = {
-                id: Date.now() + 1,
-                role: 'assistant',
-                text: "Sorry, I had trouble understanding that. Could you try rephrasing?"
-            };
-            setMessages(prev => [...prev, errorMessage]);
-        } else {
+        // FIX: Restructured to handle success case first, ensuring correct type narrowing for the `Result` type.
+        if (result.ok) {
             const aiResult = result.data;
             let card: CardData | undefined;
 
@@ -168,6 +161,14 @@ const AiChat: React.FC<AiChatProps> = (props) => {
             if (aiResult.response_type === "CLARIFICATION" && !isOpen) {
                 setHasUnread(true);
             }
+        } else {
+            console.error("AI Chat Error:", result.error);
+            const errorMessage: Message = {
+                id: Date.now() + 1,
+                role: 'assistant',
+                text: "Sorry, I had trouble understanding that. Could you try rephrasing?"
+            };
+            setMessages(prev => [...prev, errorMessage]);
         }
     };
     

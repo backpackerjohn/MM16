@@ -1,10 +1,10 @@
 
+
+
+
 import React, { useState, useEffect, useMemo } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
-// Import types from `contracts.ts` and `types.ts` correctly.
 import { MomentumMapData, FinishLine, Chunk, SubStep, Note, EnergyTag, Reflection, SavedTask } from '../contracts';
 import { CompletionRecord, TimeLearningSettings, UserDifficulty } from '../types';
-import { GamEvent } from '../utils/gamificationTypes';
 
 import FinishLineIcon from './icons/FinishLineIcon';
 import PlusIcon from './icons/PlusIcon';
@@ -36,331 +36,16 @@ import MoreOptionsIcon from './icons/MoreOptionsIcon';
 import WandIcon from './icons/WandIcon';
 import InlineConfetti from './InlineConfetti';
 import CheckIcon from './icons/CheckIcon';
+import { 
+    generateMomentumMap, 
+    replanMomentumMap, 
+    suggestChunkSplit, 
+    suggestUnblocker, 
+    suggestChunkTitle 
+} from '../services/geminiService';
+import ExclamationCircleIcon from './icons/ExclamationCircleIcon';
+import InfoIcon from './icons/InfoIcon';
 
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-const generateInitialPlan = async (goal: string, history: Record<EnergyTag, CompletionRecord[]>): Promise<MomentumMapData> => {
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            finishLine: {
-                type: Type.OBJECT,
-                properties: {
-                    statement: { type: Type.STRING },
-                    acceptanceCriteria: { type: Type.ARRAY, items: { type: Type.STRING } },
-                },
-                required: ['statement', 'acceptanceCriteria'],
-            },
-            chunks: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        id: { type: Type.STRING },
-                        title: { type: Type.STRING },
-                        subSteps: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    id: { type: Type.STRING },
-                                    description: { type: Type.STRING },
-                                    isComplete: { type: Type.BOOLEAN },
-                                },
-                                required: ['id', 'description', 'isComplete'],
-                            },
-                        },
-                        p50: { type: Type.NUMBER },
-                        p90: { type: Type.NUMBER },
-                        energyTag: { type: Type.STRING, enum: Object.values(EnergyTag) },
-                        blockers: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        isComplete: { type: Type.BOOLEAN },
-                        warning: { type: Type.STRING, description: 'A gentle warning if an estimate seems unusually high or low based on user history.' }
-                    },
-                    required: ['id', 'title', 'subSteps', 'p50', 'p90', 'energyTag', 'blockers', 'isComplete'],
-                },
-            },
-        },
-        required: ['finishLine', 'chunks'],
-    };
-
-    const historySummary = Object.entries(history)
-        .filter(([, records]) => records.length > 3)
-        .map(([tag, records]) => {
-            const avgDeviation = records.reduce((acc, r) => acc + (r.actualDurationMinutes - r.estimatedDurationMinutes), 0) / records.length;
-            return `- For '${tag}' tasks, user's actual time is, on average, ${Math.round(avgDeviation)} minutes ${avgDeviation > 0 ? 'longer' : 'shorter'} than estimated.`;
-        }).join('\n');
-    
-    const prompt = `
-      You are a world-class project manager. Create a detailed project plan for the following high-level goal.
-      The plan should have a clear "Finish Line" and be broken down into logical "Chunks" of work. Each chunk should be about 25-90 minutes of focused work.
-      
-      **User Performance History:**
-      Use this summary of the user's past performance to create more accurate and personalized time estimates. Adjust your P50/P90 estimates based on these patterns.
-      ${historySummary || "No significant user history available. Use general estimates."}
-
-      **Instructions:**
-      1.  **Finish Line**: Define the final goal and list 3-5 concrete acceptance criteria.
-      2.  **Chunks**: Break the project into logical chunks. For each chunk:
-          - Give it a clear, actionable title.
-          - Break it down into 2-5 small, concrete sub-steps.
-          - Provide P50 (median) and P90 (pessimistic) time estimates in WHOLE MINUTES, informed by the user's history.
-          - Assign an appropriate EnergyTag.
-          - If your estimate for a chunk deviates significantly from what the user's history suggests (e.g., you estimate 30m for a Creative task but they usually take 60m), add a brief, friendly 'warning' message explaining the potential discrepancy.
-          - List any potential initial blockers.
-          - Generate unique IDs for chunks and sub-steps (e.g., "chunk-1", "ss-1-1").
-          - Set initial "isComplete" status to false for all items.
-
-      Return a single JSON object that strictly follows the provided schema.
-
-      **High-Level Goal**: "${goal}"
-    `;
-
-    try {
-        const apiCall = ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema },
-        });
-
-        const timeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Request timed out after 60 seconds. The AI might be busy, please try again.")), 60000)
-        );
-
-        const response = await Promise.race([apiCall, timeout]);
-
-        const jsonStr = (response as any).text.trim();
-        const data = JSON.parse(jsonStr) as Omit<MomentumMapData, 'version'>;
-        return { ...data, version: 1 };
-    } catch (error) {
-        console.error("Error generating initial plan:", error);
-         if (error instanceof Error) {
-            throw new Error(error.message);
-        }
-        throw new Error("The AI failed to generate a plan. Please try again later.");
-    }
-};
-
-
-const rePlanIncompleteChunks = async (finishLine: FinishLine, completedSubSteps: { id: string; description: string }[], incompleteChunks: Chunk[]): Promise<Chunk[]> => {
-     const schema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                id: { type: Type.STRING },
-                title: { type: Type.STRING },
-                subSteps: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            id: { type: Type.STRING },
-                            description: { type: Type.STRING },
-                            isComplete: { type: Type.BOOLEAN },
-                        },
-                        required: ['id', 'description', 'isComplete'],
-                    },
-                },
-                p50: { type: Type.NUMBER },
-                p90: { type: Type.NUMBER },
-                energyTag: { type: Type.STRING, enum: Object.values(EnergyTag) },
-                blockers: { type: Type.ARRAY, items: { type: Type.STRING } },
-                isComplete: { type: Type.BOOLEAN },
-            },
-            required: ['id', 'title', 'subSteps', 'p50', 'p90', 'energyTag', 'blockers', 'isComplete'],
-        },
-    };
-
-    const prompt = `
-        You are a world-class project manager, tasked with re-planning a project because the final goal has changed.
-        
-        **New Goal (Finish Line)**: ${finishLine.statement}
-        **New Acceptance Criteria**: ${finishLine.acceptanceCriteria.join(', ')}
-
-        **Completed Work (DO NOT CHANGE)**:
-        The following sub-steps have already been completed and must remain in the plan as-is.
-        - ${completedSubSteps.map(s => s.description).join('\n- ') || 'None'}
-
-        **Existing Incomplete Chunks (ADJUST THESE)**:
-        Analyze the following incomplete chunks and adjust their titles, sub-steps, and estimates to align with the *new* Finish Line.
-        You can add, remove, or modify chunks and sub-steps as needed to create the most efficient path to the new goal.
-        Preserve existing IDs if a chunk or sub-step is only slightly modified. Create new IDs for entirely new items.
-        
-        **Return a JSON array of the NEW, re-planned chunks.**
-
-        **Incomplete Chunks to Re-plan**:
-        ${JSON.stringify(incompleteChunks, null, 2)}
-    `;
-
-     try {
-        const apiCall = ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema },
-        });
-
-        const timeout = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Request timed out after 60 seconds. The AI might be busy, please try again.")), 60000)
-        );
-        
-        const response = await Promise.race([apiCall, timeout]);
-        
-        const jsonStr = (response as any).text.trim();
-        return JSON.parse(jsonStr) as Chunk[];
-    } catch (error) {
-        console.error("Error replanning:", error);
-        if (error instanceof Error) {
-            throw new Error(error.message);
-        }
-        throw new Error("The AI failed to re-plan. Please try again.");
-    }
-}
-
-const generateSplitSuggestion = async (chunk: Chunk, finishLine: string, prevChunkTitle?: string, nextChunkTitle?: string): Promise<Chunk[]> => {
-    const chunkSchema = {
-        type: Type.OBJECT,
-        properties: {
-            id: { type: Type.STRING },
-            title: { type: Type.STRING },
-            subSteps: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        id: { type: Type.STRING },
-                        description: { type: Type.STRING },
-                        isComplete: { type: Type.BOOLEAN },
-                    },
-                    required: ['id', 'description', 'isComplete'],
-                },
-            },
-            p50: { type: Type.NUMBER },
-            p90: { type: Type.NUMBER },
-            energyTag: { type: Type.STRING, enum: Object.values(EnergyTag) },
-            blockers: { type: Type.ARRAY, items: { type: Type.STRING } },
-            isComplete: { type: Type.BOOLEAN },
-        },
-        required: ['id', 'title', 'subSteps', 'p50', 'p90', 'energyTag', 'blockers', 'isComplete'],
-    };
-
-    const schema = {
-        type: Type.ARRAY,
-        items: chunkSchema,
-    };
-    
-    const prompt = `
-      You are an expert project manager. A user finds a "chunk" of work too large and wants to split it.
-      Your task is to break the given chunk into 2 or 3 smaller, more manageable chunks.
-      Use the provided context to ensure the new chunks form a logical sequence.
-
-      - Each new chunk should be a logical sub-part of the original.
-      - Each new chunk should have a clear, actionable title.
-      - Distribute the original sub-steps among the new chunks. You can rephrase them for clarity if needed.
-      - Create new P50 and P90 estimates for each new chunk. The sum of the new P90s should be roughly equal to the original P90.
-      - Assign the same EnergyTag as the original.
-      - Generate new unique IDs for the new chunks (e.g., "chunk-1-split-a") and their sub-steps (e.g., "ss-1-a-1").
-      - Set "isComplete" to false.
-
-      **Project Context:**
-      - **Overall Goal (Finish Line):** ${finishLine}
-      - **Previous Chunk:** ${prevChunkTitle || 'N/A (This is the first chunk)'}
-      - **Next Chunk:** ${nextChunkTitle || 'N/A (This is the last chunk)'}
-
-      **Original Chunk to Split:**
-      ${JSON.stringify({ title: chunk.title, subSteps: chunk.subSteps.map(s => s.description), p90: chunk.p90, energyTag: chunk.energyTag }, null, 2)}
-
-      Return a JSON array of the new chunk objects, strictly following the schema.
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema },
-        });
-        const jsonStr = response.text.trim();
-        return JSON.parse(jsonStr) as Chunk[];
-    } catch (error) {
-        console.error("Error generating split suggestion:", error);
-        throw new Error("The AI failed to suggest a split. Please try again or split it manually.");
-    }
-};
-
-const generateUnblockerSuggestion = async (subStep: SubStep, context: string): Promise<string> => {
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            suggestion: { type: Type.STRING },
-        },
-        required: ['suggestion'],
-    };
-
-    const prompt = `
-      You are a helpful productivity coach. A user is feeling stuck on a task.
-      Your goal is to suggest a single, tiny, concrete, and easy-to-start "micro-step" to help them get moving.
-      This micro-step should take less than 5 minutes to complete. It's about building momentum, not solving the whole problem.
-
-      - Focus on a physical action (e.g., "Open a new document and title it...", "Draft a one-sentence email to...").
-      - Do not suggest just "thinking about it" or "making a plan".
-      - The suggestion should be a simple declarative sentence.
-
-      **Project Goal:** ${context}
-      **Stuck on this sub-step:** "${subStep.description}"
-      **Known blockers:** ${subStep.blockers?.join(', ') || 'None specified'}
-
-      Return a single JSON object with one key, "suggestion", containing the string for the micro-step.
-      Example: { "suggestion": "Open a new email draft to John Smith with the subject 'Quick question'." }
-    `;
-    
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema },
-        });
-        const jsonStr = response.text.trim();
-        const result = JSON.parse(jsonStr);
-        return result.suggestion;
-    } catch (error) {
-        console.error("Error generating unblocker suggestion:", error);
-        throw new Error("The AI failed to provide a suggestion. Try rephrasing your goal.");
-    }
-};
-
-const generateChunkTitle = async (subSteps: {description: string}[]): Promise<string> => {
-    const schema = {
-        type: Type.OBJECT,
-        properties: {
-            title: { type: Type.STRING },
-        },
-        required: ['title'],
-    };
-
-    const prompt = `
-        Based on the following list of sub-tasks, generate a concise and actionable title (3-5 words) that summarizes the overall goal of these tasks.
-
-        Sub-tasks:
-        ${subSteps.map(s => `- ${s.description}`).join('\n')}
-
-        Return a single JSON object with one key, "title".
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema },
-        });
-        const jsonStr = response.text.trim();
-        const result = JSON.parse(jsonStr);
-        return result.title;
-    } catch (error) {
-        console.error("Error generating chunk title:", error);
-        throw new Error("AI failed to suggest a title.");
-    }
-}
 
 interface MomentumMapProps {
   activeMap: MomentumMapData | null;
@@ -408,11 +93,7 @@ const LoadingIndicator: React.FC = () => {
 };
 
 
-// FIX: Define BlockerType for use in handleAcceptUnblocker
-type BlockerType = Extract<GamEvent, { type: 'blocker_logged' }>['blocker'];
-
-// FIX: Change component definition to not use React.FC to solve a subtle type inference issue.
-const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory, onNewCompletionRecord, timeLearningSettings, onSuccess }: MomentumMapProps) => {
+const MomentumMap: React.FC<MomentumMapProps> = ({ activeMap, setActiveMap, setSavedTasks, completionHistory, onNewCompletionRecord, timeLearningSettings, onSuccess }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [view, setView] = useState<'list' | 'card'>('list');
@@ -437,8 +118,11 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
 
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     
-    const [editingEntity, setEditingEntity] = useState<{ id: string, type: 'chunk' | 'subStep', chunkId?: string, error?: string } | null>(null);
+    type EditingEntityType = { id: string, type: 'chunkTitle' | 'subStep' | 'chunkTime', chunkId?: string, error?: string };
+    const [editingEntity, setEditingEntity] = useState<EditingEntityType | null>(null);
     const [editingValue, setEditingValue] = useState('');
+    const [editingValueP50, setEditingValueP50] = useState('');
+    const [editingValueP90, setEditingValueP90] = useState('');
     const [isSuggestingTitle, setIsSuggestingTitle] = useState<string | null>(null);
 
 
@@ -470,14 +154,18 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
         }
         setIsLoading(true);
         setError(null);
-        try {
-            const data = await generateInitialPlan(goal, completionHistory);
-            setActiveMap(data);
-            setOpenChunks(data.chunks.map(c => c.id));
-        } catch (e: any) {
-            setError(e.message);
-        } finally {
-            setIsLoading(false);
+        
+        const result = await generateMomentumMap(goal, completionHistory);
+        setIsLoading(false);
+
+        if (result.ok) {
+            setActiveMap(result.data);
+            setOpenChunks(result.data.chunks.map(c => c.id));
+        } else {
+            // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+            if (result.ok === false) {
+                setError(result.error);
+            }
         }
     };
     
@@ -506,19 +194,22 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
             }
         });
 
-        try {
-            const newIncompleteChunks = await rePlanIncompleteChunks(editedFinishLine, completedSubSteps, incompleteChunks);
+        const result = await replanMomentumMap(editedFinishLine, completedSubSteps, incompleteChunks);
+        setIsReplanning(false);
+
+        if (result.ok) {
             const newMapData: MomentumMapData = {
                 version: 1,
                 finishLine: editedFinishLine,
-                chunks: [...completedChunks, ...newIncompleteChunks],
+                chunks: [...completedChunks, ...result.data],
             };
             setActiveMap(newMapData);
             setIsDirty(false);
-        } catch (e: any) {
-            setError(e.message);
-        } finally {
-            setIsReplanning(false);
+        } else {
+            // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+            if (result.ok === false) {
+                setError(result.error);
+            }
         }
     };
 
@@ -784,19 +475,20 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
         setUnblockingStep({ chunkId, subStep });
         setIsGeneratingSuggestion(true);
         setUnblockerSuggestion('');
-        try {
-            const suggestion = await generateUnblockerSuggestion(subStep, activeMap?.finishLine.statement || '');
-            setUnblockerSuggestion(suggestion);
-        } catch (e: any) {
-            setError(e.message);
+        const result = await suggestUnblocker(subStep, activeMap?.finishLine.statement || '');
+        setIsGeneratingSuggestion(false);
+        if (result.ok) {
+            setUnblockerSuggestion(result.data);
+        } else {
+            // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+            if (result.ok === false) {
+                setError(result.error);
+            }
             setUnblockingStep(null); // Close modal on error
-        } finally {
-            setIsGeneratingSuggestion(false);
         }
     };
     
-    // FIX: Update signature to match what UnblockerModal provides, even if blockerType isn't used here.
-    const handleAcceptUnblocker = (suggestionText: string, blockerType: BlockerType) => {
+    const handleAcceptUnblocker = (suggestionText: string) => {
         if (!unblockingStep) return;
         
         setActiveMap(prev => {
@@ -841,22 +533,52 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
 
     const handleSuggestTitle = async (chunk: Chunk) => {
         setIsSuggestingTitle(chunk.id);
-        try {
-            const title = await generateChunkTitle(chunk.subSteps);
+        const result = await suggestChunkTitle(chunk.subSteps);
+        setIsSuggestingTitle(null);
+        if (result.ok) {
             setActiveMap(prev => {
                 if (!prev) return null;
-                const newChunks = prev.chunks.map(c => c.id === chunk.id ? { ...c, title } : c);
+                const newChunks = prev.chunks.map(c => c.id === chunk.id ? { ...c, title: result.data } : c);
                 return { ...prev, chunks: newChunks };
             });
-        } catch (e: any) {
-            setError(e.message);
-        } finally {
-            setIsSuggestingTitle(null);
+        } else {
+            // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+            if (result.ok === false) {
+                setError(result.error);
+            }
         }
     };
 
+    const handleSaveTimeEdit = () => {
+        if (!editingEntity || editingEntity.type !== 'chunkTime' || !activeMap) return;
+        
+        const { id } = editingEntity;
+        const newP50 = parseInt(editingValueP50, 10);
+        const newP90 = parseInt(editingValueP90, 10);
+    
+        if (isNaN(newP50) || isNaN(newP90) || newP50 <= 0 || newP90 <= 0) {
+            setEditingEntity(prev => prev ? { ...prev, error: "Times must be positive numbers." } : null);
+            return;
+        }
+        if (newP50 > newP90) {
+            setEditingEntity(prev => prev ? { ...prev, error: "P50 cannot be greater than P90." } : null);
+            return;
+        }
+    
+        setActiveMap(prev => {
+            if (!prev) return null;
+            return {
+                ...prev,
+                chunks: prev.chunks.map(c => c.id === id ? { ...c, p50: newP50, p90: newP90 } : c)
+            };
+        });
+    
+        setEditingEntity(null);
+    };
+
     const handleSaveEditing = () => {
-        if (!editingEntity || !activeMap) return;
+        if (!editingEntity || !activeMap || editingEntity.type === 'chunkTime') return;
+        
         const { id, type, chunkId } = editingEntity;
         const value = editingValue.trim();
 
@@ -874,7 +596,7 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
             });
         }
 
-        if (type === 'chunk') {
+        if (type === 'chunkTitle') {
             const isDuplicate = activeMap.chunks.some(c => c.id !== id && c.title.toLowerCase() === value.toLowerCase());
             if (isDuplicate) {
                 setEditingEntity(prev => prev ? { ...prev, error: "Chunk title must be unique." } : null);
@@ -972,6 +694,41 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
             </div>
         </div>
     );
+
+    const ChunkSizeFeedback: React.FC<{ chunk: Chunk; onSplit: () => void; }> = ({ chunk, onSplit }) => {
+        const isTooLarge = chunk.p90 > 90 || chunk.subSteps.length > 8;
+        const isTooSmall = (chunk.p90 < 15 || chunk.subSteps.length <= 1) && !chunk.isComplete;
+    
+        if (!isTooLarge && !isTooSmall) {
+            return null;
+        }
+    
+        if (isTooLarge) {
+            return (
+                <div className="flex items-center gap-2 p-1 pl-2 rounded-full bg-amber-100 text-amber-800 text-xs font-medium border border-amber-200">
+                    <ExclamationCircleIcon className="h-4 w-4" />
+                    <span>Consider splitting</span>
+                    <button 
+                        onClick={onSplit}
+                        className="px-2 py-0.5 rounded-full bg-amber-200 hover:bg-amber-300 text-amber-900 font-semibold"
+                    >
+                        Split
+                    </button>
+                </div>
+            );
+        }
+    
+        if (isTooSmall) {
+            return (
+                <div className="flex items-center gap-2 p-1.5 pl-2 rounded-full bg-blue-100 text-blue-800 text-xs font-medium border border-blue-200">
+                    <InfoIcon className="h-4 w-4" />
+                    <span>Consider merging</span>
+                </div>
+            );
+        }
+        
+        return null;
+    };
     
     const renderError = () => (
         <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-6 rounded-r-lg my-8" role="alert">
@@ -1212,7 +969,8 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
         if (progressPercent > 90) progressBarColor = 'bg-red-500';
         else if (progressPercent > 75) progressBarColor = 'bg-yellow-500';
 
-        const isEditingThisChunk = editingEntity?.type === 'chunk' && editingEntity.id === chunk.id;
+        const isEditingThisChunkTitle = editingEntity?.type === 'chunkTitle' && editingEntity.id === chunk.id;
+        const isEditingTime = editingEntity?.type === 'chunkTime' && editingEntity.id === chunk.id;
         const canSuggestTitle = !chunk.title && chunk.subSteps.length >= 2;
         const isSuggestingThisTitle = isSuggestingTitle === chunk.id;
 
@@ -1220,7 +978,7 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
             <div>
                 <div className="flex items-start space-x-3">
                     <div className="flex-1">
-                        {isEditingThisChunk ? (
+                        {isEditingThisChunkTitle ? (
                             <div>
                                 <input
                                     type="text"
@@ -1235,7 +993,7 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
                             </div>
                         ) : (
                             <div className="flex items-center gap-2">
-                                <h3 className="text-xl font-bold text-[var(--color-text-primary)]" onDoubleClick={() => { setEditingEntity({ id: chunk.id, type: 'chunk' }); setEditingValue(chunk.title); }}>
+                                <h3 className="text-xl font-bold text-[var(--color-text-primary)]" onDoubleClick={() => { setEditingEntity({ id: chunk.id, type: 'chunkTitle' }); setEditingValue(chunk.title); }}>
                                     {chunk.title || <span className="text-[var(--color-text-subtle)] italic">Untitled Chunk</span>}
                                 </h3>
                                 {canSuggestTitle && (
@@ -1251,16 +1009,44 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
                                 )}
                             </div>
                         )}
-                        <div className="flex items-center space-x-4 text-sm text-[var(--color-text-secondary)] mt-1 flex-wrap">
+                        <div className="flex items-center space-x-4 text-sm text-[var(--color-text-secondary)] mt-1 flex-wrap gap-y-2">
                             <div className="flex items-center space-x-1.5" title={chunk.confidenceReason || `P50-P90 Estimate: ${p50}-${p90}m`}>
                                 <ClockIcon className="h-4 w-4" />
-                                <span>{p50}-{p90}m</span>
+                                {isEditingTime ? (
+                                    <>
+                                        <input
+                                            type="number"
+                                            value={editingValueP50}
+                                            onChange={e => setEditingValueP50(e.target.value)}
+                                            onBlur={handleSaveTimeEdit}
+                                            onKeyDown={e => { if (e.key === 'Enter') handleSaveTimeEdit(); if (e.key === 'Escape') setEditingEntity(null); }}
+                                            className="w-10 bg-transparent p-0.5 rounded focus:outline-none focus:ring-1 ring-[var(--color-primary-accent)] text-center text-sm"
+                                            autoFocus
+                                        />
+                                        <span>-</span>
+                                        <input
+                                            type="number"
+                                            value={editingValueP90}
+                                            onChange={e => setEditingValueP90(e.target.value)}
+                                            onBlur={handleSaveTimeEdit}
+                                            onKeyDown={e => { if (e.key === 'Enter') handleSaveTimeEdit(); if (e.key === 'Escape') setEditingEntity(null); }}
+                                            className="w-10 bg-transparent p-0.5 rounded focus:outline-none focus:ring-1 ring-[var(--color-primary-accent)] text-center text-sm"
+                                        />
+                                        <span>m</span>
+                                    </>
+                                ) : (
+                                    <span onDoubleClick={() => {
+                                        setEditingEntity({ id: chunk.id, type: 'chunkTime' });
+                                        setEditingValueP50(String(p50));
+                                        setEditingValueP90(String(p90));
+                                    }}>{p50}-{p90}m</span>
+                                )}
                             </div>
                             <div className="flex items-center space-x-1.5" title={`Energy: ${chunk.energyTag}`}>
                                 <EnergyIcon className="h-4 w-4" />
                                 <span>{chunk.energyTag}</span>
                             </div>
-                            {chunk.confidence && chunk.confidenceValue !== undefined && (
+                             {chunk.confidence && chunk.confidenceValue !== undefined && (
                                 <div 
                                     className={`flex items-center space-x-1.5 font-semibold text-xs capitalize px-2 py-0.5 rounded-full border ${confidenceColors[chunk.confidence]}`}
                                     title={chunk.confidenceReason}
@@ -1268,7 +1054,11 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
                                 <span>Confidence: {Math.round(chunk.confidenceValue * 100)}%</span>
                                 </div>
                             )}
+                            <ChunkSizeFeedback chunk={chunk} onSplit={() => setChunkToSplit(chunk)} />
                         </div>
+                        {editingEntity?.type === 'chunkTime' && editingEntity.id === chunk.id && editingEntity.error && (
+                            <p className="text-xs text-red-600 mt-1">{editingEntity.error}</p>
+                        )}
                         {chunk.warning && <p className="text-xs text-amber-700 bg-amber-100 p-1.5 rounded-md mt-2">💡 {chunk.warning}</p>}
                     </div>
                     <div className="flex items-center space-x-2">
@@ -1620,15 +1410,25 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
                     onClose={() => setChunkToSplit(null)}
                     onSave={handleSaveSplit}
                     chunkToSplit={chunkToSplit}
-                    // FIX: Pass an inline function to `onGenerateSplit` to provide the necessary context (finishLine, surrounding chunks) to `generateSplitSuggestion`.
-                    onGenerateSplit={(chunk) => {
+                    onGenerateSplit={async (chunk) => {
                         if (!activeMap) {
-                            return Promise.reject(new Error("Cannot generate split suggestion: no active map."));
+                            throw new Error("Cannot generate split suggestion: no active map.");
                         }
                         const chunkIndex = activeMap.chunks.findIndex(c => c.id === chunk.id);
                         const prevChunkTitle = chunkIndex > 0 ? activeMap.chunks[chunkIndex - 1].title : undefined;
                         const nextChunkTitle = chunkIndex < activeMap.chunks.length - 1 ? activeMap.chunks[chunkIndex + 1].title : undefined;
-                        return generateSplitSuggestion(chunk, activeMap.finishLine.statement, prevChunkTitle, nextChunkTitle);
+                        
+                        const result = await suggestChunkSplit(chunk, activeMap.finishLine.statement, prevChunkTitle, nextChunkTitle);
+                        if (result.ok) {
+                            return result.data;
+                        } else {
+                            // FIX: Explicitly check for the 'false' case to ensure correct type narrowing.
+                            if (result.ok === false) {
+                                throw new Error(result.error);
+                            }
+                            // This part of the code should be unreachable, but it satisfies TypeScript's exhaustiveness checks.
+                            throw new Error("An unknown error occurred during chunk splitting.");
+                        }
                     }}
                 />
             )}
@@ -1637,7 +1437,7 @@ const MomentumMap = ({ activeMap, setActiveMap, setSavedTasks, completionHistory
                 <UnblockerModal
                     isOpen={!!unblockingStep}
                     onClose={() => setUnblockingStep(null)}
-                    onAccept={handleAcceptUnblocker}
+                    onAccept={(suggestionText) => handleAcceptUnblocker(suggestionText)}
                     suggestion={unblockerSuggestion}
                     isLoading={isGeneratingSuggestion}
                     blockedStepText={unblockingStep.subStep.description}
